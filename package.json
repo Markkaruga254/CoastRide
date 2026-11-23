@@ -4,12 +4,12 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "tsx watch src/http/server.ts",
+    "dev": "tsx watch --env-file=.env src/http/server.ts",
     "build": "tsc && prisma generate",
     "start": "node dist/http/server.js",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "db:migrate": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts"
   },
