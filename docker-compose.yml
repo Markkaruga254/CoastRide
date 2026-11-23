@@ -1,0 +1,35 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: coastride
+      POSTGRES_PASSWORD: coastride
+      POSTGRES_DB: coastride
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+  test-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: coastride
+      POSTGRES_PASSWORD: coastride
+      POSTGRES_DB: coastride_test
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata_test:/var/lib/postgresql/data
+  app:
+    build: .
+    depends_on:
+      - db
+    environment:
+      DATABASE_URL: "postgresql://coastride:coastride@db:5432/coastride"
+      PORT: 3000
+      WEBHOOK_SECRET: "change-me-in-production"
+      LOG_LEVEL: info
+    ports:
+      - "3000:3000"
+volumes:
+  pgdata:
+  pgdata_test:
