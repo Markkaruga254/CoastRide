@@ -9,7 +9,7 @@
     "start": "node dist/http/server.js",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --passWithNoTests",
+    "test": "node --env-file=.env ./node_modules/.bin/vitest run --passWithNoTests",
     "db:migrate": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts"
   },

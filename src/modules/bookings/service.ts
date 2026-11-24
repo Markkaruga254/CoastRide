@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client'
+import pino from 'pino'
 import { applyEvent, IllegalTransitionError } from '../trips/stateMachine.js'
 import { generateRef } from './ref.js'
 import { normalizePhone } from '../../lib/phone.js'
@@ -42,6 +43,7 @@ function isUniqueViolation(e: unknown): boolean {
 }
 
 const TIME_ZONE = 'Africa/Nairobi'
+const log = pino({ level: 'error' })
 
 async function dispatchQueued(
   deps: TripServiceDeps,
@@ -58,7 +60,8 @@ async function dispatchQueued(
         where: { id: m.id },
         data: { status: 'sent', providerId },
       })
-    } catch {
+    } catch (e) {
+      log.error({ err: e, messageId: m.id }, 'sms dispatch failed')
       await deps.prisma.message.update({
         where: { id: m.id },
         data: { status: 'failed' },

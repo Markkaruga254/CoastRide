@@ -44,6 +44,42 @@ describe('driver selection', () => {
     expect(selected?.name).toBe(drivers[0].name)
   })
 
+  it('returns drivers in createdAt order (oldest first)', async () => {
+    await prisma.driver.deleteMany()
+    const firstCreated = await prisma.driver.create({
+      data: {
+        name: 'A First Driver',
+        phone: '+254700000099',
+        plate: 'AAA 000A',
+        vehicle: 'Toyota First',
+      },
+    })
+    await new Promise((r) => setTimeout(r, 100))
+    await prisma.driver.create({
+      data: {
+        name: 'Z Last Driver',
+        phone: '+254799999999',
+        plate: 'ZZZ 000Z',
+        vehicle: 'Toyota Last',
+      },
+    })
+
+    const booking = await prisma.booking.create({
+      data: {
+        ref: 'CR0010',
+        passengerPhone: '+254700000010',
+        pickupPoint: 'MIA',
+        pickupAt: new Date('2026-11-24T14:30:00Z'),
+        destination: 'Westlands',
+        partySize: 2,
+      },
+    })
+
+    const selected = await selectNextDriver(prisma, booking.id)
+    expect(selected?.id).toBe(firstCreated.id)
+    expect(selected?.name).toBe('A First Driver')
+  })
+
   it('skips drivers who already declined for this booking', async () => {
     const drivers = await seedDrivers()
     const booking = await prisma.booking.create({

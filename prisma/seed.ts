@@ -31,17 +31,17 @@ async function main() {
     );
   }
 
-  await prisma.$transaction(
-    drivers.map((d, i) =>
-      prisma.driver.upsert({
-        where: { phone: phones[i] },
-        update: {},
-        create: { ...d, phone: phones[i] },
-      }),
-    ),
-  );
+  for (let i = 0; i < drivers.length; i++) {
+    await prisma.driver.upsert({
+      where: { phone: phones[i] },
+      update: {},
+      create: { ...drivers[i], phone: phones[i] },
+    })
+  }
 
-  const created = await prisma.driver.findMany({ orderBy: { id: 'asc' } });
+  const created = await prisma.driver.findMany({
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+  });
   console.log(
     `Seeded ${created.length} drivers:`,
     created.map((d) => `${d.name} (${d.phone})`).join(', '),

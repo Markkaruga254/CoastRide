@@ -173,4 +173,27 @@ describe('trip lifecycle acceptance (1-5, 7)', () => {
     const back = await prisma.booking.findUnique({ where: { id: booking.id } })
     expect(back?.state).toBe('OFFERED')
   })
+
+  it('messenger throws: booking still succeeds, message row marked failed', async () => {
+    const throwingMessenger = {
+      sendSms: async () => {
+        throw new Error('SMS provider down')
+      },
+    }
+    const deps = { prisma, messenger: throwingMessenger }
+    await seedDrivers()
+
+    const booking = await createBooking(deps, BOOKING_INPUT)
+    expect(booking.state).toBe('REQUESTED')
+
+    const offered = await offerNextDriver(deps, { bookingId: booking.id })
+    expect(offered.booking.state).toBe('OFFERED')
+
+    const message = await prisma.message.findFirst({
+      where: { bookingId: booking.id },
+      orderBy: { createdAt: 'desc' },
+    })
+    expect(message).not.toBeNull()
+    expect(message!.status).toBe('failed')
+  })
 })

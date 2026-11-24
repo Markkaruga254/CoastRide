@@ -17,7 +17,7 @@ export async function selectNextDriver(
 
   const drivers = await prisma.driver.findMany({
     where: { active: true, id: { notIn: [...declinedIds] } },
-    orderBy: { id: 'asc' },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     take: 1,
   })
 
