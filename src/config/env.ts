@@ -7,6 +7,9 @@ const envSchema = z.object({
   WEBHOOK_SECRET: z.string().min(24),
   AT_USERNAME: z.string().optional(),
   AT_API_KEY: z.string().optional(),
+  SEED_DRIVER_PHONES: z.string().default(
+    '+254700000001,+254700000002,+254700000003,+254700000004',
+  ),
   LOG_LEVEL: z
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace'])
     .default('info'),

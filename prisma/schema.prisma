@@ -1,0 +1,105 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Driver {
+  id        String   @id @default(dbgenerated("gen_random_uuid()"))
+  name      String
+  phone     String   @unique
+  plate     String
+  vehicle   String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Booking {
+  id             String     @id @default(dbgenerated("gen_random_uuid()"))
+  ref            String     @unique
+  passengerName  String?
+  passengerPhone String
+  pickupPoint    String
+  arrivalRef     String?
+  pickupAt       DateTime
+  destination    String
+  partySize      Int
+  state          TripState  @default(REQUESTED)
+  driverId       String?
+  driver         Driver?    @relation(fields: [driverId], references: [id])
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  declines  BookingDecline[]
+  events    TripEvent[]
+  messages  Message[]
+
+  @@index([ref])
+  @@index([state])
+  @@index([driverId])
+  @@index([passengerPhone])
+}
+
+model BookingDecline {
+  bookingId String
+  driverId  String
+  reason    DeclineReason @default(declined)
+  createdAt DateTime @default(now())
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  driver  Driver  @relation(fields: [driverId], references: [id])
+
+  @@id([bookingId, driverId])
+}
+
+model TripEvent {
+  id        String   @id @default(dbgenerated("gen_random_uuid()"))
+  bookingId String
+  type      String
+  payload   Json     @default("{}")
+  createdAt DateTime @default(now())
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+}
+
+model Message {
+  id          String   @id @default(dbgenerated("gen_random_uuid()"))
+  bookingId   String?
+  direction   String
+  channel     String
+  phone       String
+  body        String
+  providerId  String?
+  status      String   @default("queued")
+  createdAt   DateTime @default(now())
+
+  booking Booking? @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+}
+
+model WebhookEvent {
+  id          String   @id
+  receivedAt  DateTime @default(now())
+}
+
+enum TripState {
+  REQUESTED
+  OFFERED
+  CONFIRMED
+  ARRIVED
+  COMPLETED
+  CANCELLED
+  NO_DRIVER
+}
+
+enum DeclineReason {
+  declined
+  timeout
+}
