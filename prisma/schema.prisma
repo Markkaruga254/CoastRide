@@ -8,19 +8,21 @@ datasource db {
 }
 
 model Driver {
-  id        String   @id @default(dbgenerated("gen_random_uuid()"))
-  name      String
-  phone     String   @unique
-  plate     String
-  vehicle   String
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id             String           @id @default(dbgenerated("gen_random_uuid()"))
+  name           String
+  phone          String           @unique
+  plate          String
+  vehicle        String
+  active         Boolean          @default(true)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  Booking        Booking[]
+  BookingDecline BookingDecline[]
 }
 
 model Booking {
-  id             String     @id @default(dbgenerated("gen_random_uuid()"))
-  ref            String     @unique
+  id             String    @id @default(dbgenerated("gen_random_uuid()"))
+  ref            String    @unique
   passengerName  String?
   passengerPhone String
   pickupPoint    String
@@ -28,15 +30,15 @@ model Booking {
   pickupAt       DateTime
   destination    String
   partySize      Int
-  state          TripState  @default(REQUESTED)
+  state          TripState @default(REQUESTED)
   driverId       String?
-  driver         Driver?    @relation(fields: [driverId], references: [id])
-  createdAt      DateTime   @default(now())
-  updatedAt      DateTime   @updatedAt
+  driver         Driver?   @relation(fields: [driverId], references: [id])
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-  declines  BookingDecline[]
-  events    TripEvent[]
-  messages  Message[]
+  declines BookingDecline[]
+  events   TripEvent[]
+  messages Message[]
 
   @@index([ref])
   @@index([state])
@@ -48,7 +50,7 @@ model BookingDecline {
   bookingId String
   driverId  String
   reason    DeclineReason @default(declined)
-  createdAt DateTime @default(now())
+  createdAt DateTime      @default(now())
 
   booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
   driver  Driver  @relation(fields: [driverId], references: [id])
@@ -69,15 +71,15 @@ model TripEvent {
 }
 
 model Message {
-  id          String   @id @default(dbgenerated("gen_random_uuid()"))
-  bookingId   String?
-  direction   String
-  channel     String
-  phone       String
-  body        String
-  providerId  String?
-  status      String   @default("queued")
-  createdAt   DateTime @default(now())
+  id         String   @id @default(dbgenerated("gen_random_uuid()"))
+  bookingId  String?
+  direction  String
+  channel    String
+  phone      String
+  body       String
+  providerId String?
+  status     String   @default("queued")
+  createdAt  DateTime @default(now())
 
   booking Booking? @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 
@@ -85,8 +87,8 @@ model Message {
 }
 
 model WebhookEvent {
-  id          String   @id
-  receivedAt  DateTime @default(now())
+  id         String   @id
+  receivedAt DateTime @default(now())
 }
 
 enum TripState {
