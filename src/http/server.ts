@@ -1,4 +1,4 @@
-import fastify, { FastifyInstance } from 'fastify'
+import fastify, { FastifyInstance, FastifyError, FastifyRequest, FastifyReply } from 'fastify'
 import { PrismaClient } from '@prisma/client'
 import { getEnv } from '../config/env.js'
 import { MessagingPort } from '../modules/messaging/port.js'
@@ -29,6 +29,13 @@ function parseFormBody(payload: unknown): Record<string, string> {
   return result
 }
 
+export function redactSecret(url: string, secret: string): string {
+  if (!secret) return url
+  // Match /webhooks/<secret>/ and replace with /webhooks/[redacted]/
+  const escaped = secret.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return url.replace(new RegExp(`/webhooks/${escaped}/`), '/webhooks/[redacted]/')
+}
+
 export function buildApp(deps: { prisma: PrismaClient; messenger: MessagingPort }, opts: { isTest?: boolean } = {}): FastifyInstance {
   const env = getEnv()
   const app = fastify({
@@ -40,15 +47,35 @@ export function buildApp(deps: { prisma: PrismaClient; messenger: MessagingPort 
             paths: ['req.body.*', 'req.headers.authorization', 'req.headers.cookie'],
             censor: '[REDACTED]',
           },
+          serializers: {
+            req: (request) => ({
+              method: request.method,
+              url: redactSecret(request.url, env.WEBHOOK_SECRET),
+              headers: request.headers,
+              remoteAddress: request.ip,
+              remotePort: request.socket?.remotePort,
+            }),
+            err: (err) => ({
+              type: 'Error',
+              message: err.message,
+              stack: err.stack ?? '',
+              statusCode: err.statusCode,
+            }),
+          },
         },
-  })
+  }) as FastifyInstance
 
   // Add content type parser for form-urlencoded
-  app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, async (payload: unknown) => {
-    return parseFormBody(payload)
+  app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, function (request, payload, done) {
+    try {
+      const result = parseFormBody(payload)
+      done(null, result)
+    } catch (err) {
+      done(err as Error, undefined)
+    }
   })
 
-  app.setErrorHandler(errorHandler)
+  app.setErrorHandler(errorHandler as (error: FastifyError, request: FastifyRequest, reply: FastifyReply) => void)
   app.register(healthRoutes)
   app.register(webhooksRoutes)
   app.register(bookingsRoutes, deps)

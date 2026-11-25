@@ -3,6 +3,7 @@ import { FastifyInstance } from 'fastify'
 import { PrismaClient } from '@prisma/client'
 import { buildApp } from '../../src/http/server.js'
 import { FakeMessenger } from '../../src/modules/messaging/fake.js'
+import { redactSecret } from '../../src/http/server.js'
 
 const prisma = new PrismaClient({
   datasourceUrl: process.env.TEST_DATABASE_URL,
@@ -11,12 +12,33 @@ const messenger = new FakeMessenger()
 let app: FastifyInstance
 
 beforeEach(async () => {
-  app = buildApp({ prisma, messenger })
+  // Enable logger for secret redaction test
+  app = buildApp({ prisma, messenger }, { isTest: false })
+})
+
+// Use the actual secret from the environment (set in .env)
+const SECRET = process.env.WEBHOOK_SECRET || 'fc0e113be1bd6451921044b0b61a8934'
+
+describe('secret redaction in logs', () => {
+  it('redactSecret replaces secret with [redacted] in URL', () => {
+    const url = `/webhooks/${SECRET}/echo`
+    const redacted = redactSecret(url, SECRET)
+    expect(redacted).toBe('/webhooks/[redacted]/echo')
+    expect(redacted).not.toContain(SECRET)
+  })
+
+  it('logs do not contain the webhook secret in URL', async () => {
+    const res = await app.inject({
+      method: 'POST',
+      url: `/webhooks/${SECRET}/echo`,
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: 'test=data',
+    })
+    expect(res.statusCode).toBe(200)
+  })
 })
 
 describe('webhook form body and error handling', () => {
-  const SECRET = 'change-me-in-production-secret'
-
   it('echo returns 200 with form-encoded body', async () => {
     const res = await app.inject({
       method: 'POST',
@@ -51,8 +73,6 @@ describe('webhook form body and error handling', () => {
   })
 
   it('rate limit: more than limit within window returns 429', async () => {
-    // Test with a low limit by making many requests
-    // Note: rate limit is per IP and in-memory; this test verifies the mechanism
     const url = `/webhooks/${SECRET}/echo`
     const results = []
     for (let i = 0; i < 70; i++) {
@@ -63,8 +83,45 @@ describe('webhook form body and error handling', () => {
       })
       results.push(res.statusCode)
     }
-    // Should have some 429s after the limit (60 per minute per IP)
     const limited = results.filter((c) => c === 429).length
     expect(limited).toBeGreaterThan(0)
+  })
+})
+
+describe('placeholder secret rejection', () => {
+  it('rejects WEBHOOK_SECRET containing "change-me"', async () => {
+    const { envSchema } = await import('../../src/config/env.js')
+    expect(() => {
+      envSchema.parse({
+        NODE_ENV: 'development',
+        DATABASE_URL: 'postgresql://coastride:coastride@localhost:5432/coastride',
+        TEST_DATABASE_URL: 'postgresql://coastride:coastride@localhost:5433/coastride_test',
+        PORT: '3000',
+        WEBHOOK_SECRET: 'change-me-in-production-secret',
+        AT_ENABLED: 'false',
+        AT_USERNAME: '',
+        AT_API_KEY: '',
+        SEED_DRIVER_PHONES: '+254700000001,+254700000002,+254700000003,+254700000004',
+        LOG_LEVEL: 'info',
+      })
+    }).toThrow(/WEBHOOK_SECRET must not contain placeholder values/)
+  })
+
+  it('rejects WEBHOOK_SECRET containing "REPLACE_ME"', async () => {
+    const { envSchema } = await import('../../src/config/env.js')
+    expect(() => {
+      envSchema.parse({
+        NODE_ENV: 'development',
+        DATABASE_URL: 'postgresql://coastride:coastride@localhost:5432/coastride',
+        TEST_DATABASE_URL: 'postgresql://coastride:coastride@localhost:5433/coastride_test',
+        PORT: '3000',
+        WEBHOOK_SECRET: 'REPLACE_ME_with_openssl_rand_hex_16',
+        AT_ENABLED: 'false',
+        AT_USERNAME: '',
+        AT_API_KEY: '',
+        SEED_DRIVER_PHONES: '+254700000001,+254700000002,+254700000003,+254700000004',
+        LOG_LEVEL: 'info',
+      })
+    }).toThrow(/WEBHOOK_SECRET must not contain placeholder values/)
   })
 })

@@ -14,6 +14,9 @@ beforeEach(async () => {
   app = buildApp({ prisma, messenger })
 })
 
+// Use the actual secret from the environment (set in .env)
+const SECRET = process.env.WEBHOOK_SECRET || 'fc0e113be1bd6451921044b0b61a8934'
+
 describe('webhook routes', () => {
   it('echo returns 404 with wrong secret', async () => {
     const res = await app.inject({
@@ -27,7 +30,7 @@ describe('webhook routes', () => {
   it('echo returns 200 with correct secret', async () => {
     const res = await app.inject({
       method: 'POST',
-      url: '/webhooks/change-me-in-production-secret/echo',
+      url: `/webhooks/${SECRET}/echo`,
       body: { test: 'data' },
     })
     expect(res.statusCode).toBe(200)
@@ -37,7 +40,7 @@ describe('webhook routes', () => {
   it('echo masks phone numbers in logs (behavior test)', async () => {
     const res = await app.inject({
       method: 'POST',
-      url: '/webhooks/change-me-in-production-secret/echo',
+      url: `/webhooks/${SECRET}/echo`,
       body: { phoneNumber: '+254700000001', from: '+254700000002' },
     })
     expect(res.statusCode).toBe(200)
@@ -48,7 +51,7 @@ describe('webhook routes', () => {
     // Just verify the endpoint works
     const res = await app.inject({
       method: 'POST',
-      url: '/webhooks/change-me-in-production-secret/echo',
+      url: `/webhooks/${SECRET}/echo`,
       body: { test: 'rate' },
     })
     expect(res.statusCode).toBe(200)
