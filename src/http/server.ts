@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client'
 import { getEnv } from '../config/env.js'
 import { MessagingPort } from '../modules/messaging/port.js'
 import { FakeMessenger } from '../modules/messaging/fake.js'
+import { AfricasTalkingMessenger } from '../modules/messaging/africastalking.js'
 import { errorHandler } from './error.js'
 import healthRoutes from './routes/health.js'
 import bookingsRoutes from './routes/bookings.js'
@@ -95,7 +96,7 @@ export function buildApp(
 export function listen(port?: number, callback?: (err: Error | null, address: string) => void) {
   const env = getEnv()
   const prisma = new PrismaClient()
-  const messenger = new FakeMessenger()
+  const messenger = env.AT_ENABLED ? new AfricasTalkingMessenger() : new FakeMessenger()
   const app = buildApp({ prisma, messenger }, { isTest: false })
   const target = port ?? env.PORT
   app.listen({ port: target }, (err, address) => {
