@@ -7,6 +7,7 @@ export const envSchema = z.object({
   DATABASE_URL: z.string().url(),
   TEST_DATABASE_URL: z.string().url().optional(),
   PORT: z.string().regex(/^\d+$/).transform(Number).default('3000'),
+  HOST: z.string().default('0.0.0.0'),
   WEBHOOK_SECRET: z.string().min(24).refine(
     (val) => !forbiddenSecretPatterns.some((p) => val.includes(p)),
     'WEBHOOK_SECRET must not contain placeholder values like "change-me" or "REPLACE_ME"',

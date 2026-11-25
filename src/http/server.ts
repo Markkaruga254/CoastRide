@@ -99,9 +99,10 @@ export function listen(port?: number, callback?: (err: Error | null, address: st
   const messenger = env.AT_ENABLED ? new AfricasTalkingMessenger() : new FakeMessenger()
   const app = buildApp({ prisma, messenger }, { isTest: false })
   const target = port ?? env.PORT
-  app.listen({ port: target }, (err, address) => {
+  const host = env.HOST
+  app.listen({ port: target, host }, (err, address) => {
     if (!err) {
-      app.log.info(`listening on port ${target}`)
+      app.log.info(`listening on ${host}:${target}`)
     }
     callback?.(err, address)
   })
