@@ -8,19 +8,8 @@ import healthRoutes from './routes/health.js'
 import bookingsRoutes from './routes/bookings.js'
 import webhooksRoutes from './routes/webhooks.js'
 
-function parseFormBody(payload: unknown): Record<string, string> {
-  let payloadStr: string
-  if (typeof payload === 'string') {
-    payloadStr = payload
-  } else if (Buffer.isBuffer(payload)) {
-    payloadStr = payload.toString('utf8')
-  } else if (payload && typeof payload === 'object' && '_lightMyRequest' in payload) {
-    // Fastify inject passes the Request object with _lightMyRequest.payload
-    const req = payload as { _lightMyRequest?: { payload: string } }
-    payloadStr = req._lightMyRequest?.payload || ''
-  } else {
-    payloadStr = String(payload)
-  }
+function parseFormBody(payload: string | Buffer): Record<string, string> {
+  const payloadStr = Buffer.isBuffer(payload) ? payload.toString('utf8') : payload
   const params = new URLSearchParams(payloadStr)
   const result: Record<string, string> = {}
   for (const [key, value] of params) {
@@ -36,11 +25,42 @@ export function redactSecret(url: string, secret: string): string {
   return url.replace(new RegExp(`/webhooks/${escaped}/`), '/webhooks/[redacted]/')
 }
 
-export function buildApp(deps: { prisma: PrismaClient; messenger: MessagingPort }, opts: { isTest?: boolean } = {}): FastifyInstance {
+export function buildApp(
+  deps: { prisma: PrismaClient; messenger: MessagingPort },
+  opts: { isTest?: boolean; logStream?: NodeJS.WritableStream } = {}
+): FastifyInstance {
   const env = getEnv()
-  const app = fastify({
-    logger: opts.isTest
-      ? false
+
+  const reqSerializer = (request: FastifyRequest) => ({
+    method: request.method,
+    url: redactSecret(request.url, env.WEBHOOK_SECRET),
+    headers: request.headers,
+    remoteAddress: request.ip,
+    remotePort: request.socket?.remotePort,
+  })
+
+  const errSerializer = (err: FastifyError) => ({
+    type: 'Error',
+    message: err.message,
+    stack: err.stack ?? '',
+    statusCode: err.statusCode,
+  })
+
+  const logger = opts.isTest
+    ? false
+    : opts.logStream
+      ? {
+          level: env.LOG_LEVEL,
+          stream: opts.logStream,
+          redact: {
+            paths: ['req.body.*', 'req.headers.authorization', 'req.headers.cookie'],
+            censor: '[REDACTED]',
+          },
+          serializers: {
+            req: reqSerializer,
+            err: errSerializer,
+          },
+        }
       : {
           level: env.LOG_LEVEL,
           redact: {
@@ -48,22 +68,12 @@ export function buildApp(deps: { prisma: PrismaClient; messenger: MessagingPort 
             censor: '[REDACTED]',
           },
           serializers: {
-            req: (request) => ({
-              method: request.method,
-              url: redactSecret(request.url, env.WEBHOOK_SECRET),
-              headers: request.headers,
-              remoteAddress: request.ip,
-              remotePort: request.socket?.remotePort,
-            }),
-            err: (err) => ({
-              type: 'Error',
-              message: err.message,
-              stack: err.stack ?? '',
-              statusCode: err.statusCode,
-            }),
+            req: reqSerializer,
+            err: errSerializer,
           },
-        },
-  }) as FastifyInstance
+        }
+
+  const app = fastify({ logger }) as FastifyInstance
 
   // Add content type parser for form-urlencoded
   app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, function (request, payload, done) {

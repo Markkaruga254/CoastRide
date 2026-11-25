@@ -4,17 +4,12 @@ import { PrismaClient } from '@prisma/client'
 import { buildApp } from '../../src/http/server.js'
 import { FakeMessenger } from '../../src/modules/messaging/fake.js'
 import { redactSecret } from '../../src/http/server.js'
+import { Writable } from 'node:stream'
 
 const prisma = new PrismaClient({
   datasourceUrl: process.env.TEST_DATABASE_URL,
 })
 const messenger = new FakeMessenger()
-let app: FastifyInstance
-
-beforeEach(async () => {
-  // Enable logger for secret redaction test
-  app = buildApp({ prisma, messenger }, { isTest: false })
-})
 
 // Use the actual secret from the environment (set in .env)
 const SECRET = process.env.WEBHOOK_SECRET || 'fc0e113be1bd6451921044b0b61a8934'
@@ -27,7 +22,18 @@ describe('secret redaction in logs', () => {
     expect(redacted).not.toContain(SECRET)
   })
 
-  it('logs do not contain the webhook secret in URL', async () => {
+  it('logger redacts webhook secret in URL', async () => {
+    // Create a custom stream to capture logs
+    const chunks: Buffer[] = []
+    const logStream = new Writable({
+      write(chunk, _encoding, callback) {
+        chunks.push(Buffer.from(chunk))
+        callback()
+      },
+    })
+
+    const app = buildApp({ prisma, messenger }, { isTest: false, logStream })
+
     const res = await app.inject({
       method: 'POST',
       url: `/webhooks/${SECRET}/echo`,
@@ -35,10 +41,23 @@ describe('secret redaction in logs', () => {
       body: 'test=data',
     })
     expect(res.statusCode).toBe(200)
+
+    // Wait a tick for logs to flush
+    await new Promise((r) => setImmediate(r))
+
+    const logText = Buffer.concat(chunks).toString('utf8')
+    expect(logText).not.toContain(SECRET)
+    expect(logText).toContain('/webhooks/[redacted]/')
   })
 })
 
 describe('webhook form body and error handling', () => {
+  let app: FastifyInstance
+
+  beforeEach(async () => {
+    app = buildApp({ prisma, messenger })
+  })
+
   it('echo returns 200 with form-encoded body', async () => {
     const res = await app.inject({
       method: 'POST',
