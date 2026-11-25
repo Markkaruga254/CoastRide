@@ -6,11 +6,13 @@ import { FakeMessenger } from '../modules/messaging/fake.js'
 import { errorHandler } from './error.js'
 import healthRoutes from './routes/health.js'
 import bookingsRoutes from './routes/bookings.js'
+import webhooksRoutes from './routes/webhooks.js'
 
 export function buildApp(deps: { prisma: PrismaClient; messenger: MessagingPort }): FastifyInstance {
   const app = fastify({ logger: false })
   app.setErrorHandler(errorHandler)
   app.register(healthRoutes)
+  app.register(webhooksRoutes)
   app.register(bookingsRoutes, deps)
   return app
 }

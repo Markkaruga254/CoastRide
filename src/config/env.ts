@@ -1,10 +1,12 @@
 import { z } from 'zod';
 
 const envSchema = z.object({
+  NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   DATABASE_URL: z.string().url(),
   TEST_DATABASE_URL: z.string().url().optional(),
   PORT: z.string().regex(/^\d+$/).transform(Number).default('3000'),
   WEBHOOK_SECRET: z.string().min(24),
+  AT_ENABLED: z.string().transform((v) => v === 'true').default('false'),
   AT_USERNAME: z.string().optional(),
   AT_API_KEY: z.string().optional(),
   SEED_DRIVER_PHONES: z.string().default(
@@ -13,7 +15,15 @@ const envSchema = z.object({
   LOG_LEVEL: z
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace'])
     .default('info'),
-});
+}).refine(
+  (data) => {
+    if (data.NODE_ENV === 'production' || data.AT_ENABLED) {
+      return !!data.AT_USERNAME && !!data.AT_API_KEY;
+    }
+    return true;
+  },
+  { message: 'AT_USERNAME and AT_API_KEY are required when NODE_ENV=production or AT_ENABLED=true', path: ['AT_USERNAME'] },
+);
 
 export type Env = z.infer<typeof envSchema>;
 
