@@ -1,5 +1,4 @@
 import fastify, { FastifyInstance, FastifyError, FastifyRequest, FastifyReply } from 'fastify'
-import pino from 'pino'
 import { PrismaClient } from '@prisma/client'
 import { getEnv } from '../config/env.js'
 import { MessagingPort } from '../modules/messaging/port.js'
