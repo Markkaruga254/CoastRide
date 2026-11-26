@@ -52,6 +52,7 @@ jobs:
           AT_ENABLED=false
           AT_USERNAME=
           AT_API_KEY=
+          CRON_SECRET=ci-only-cron-secret-0123456789abcdef
           LOG_LEVEL=error
           EOF
 
