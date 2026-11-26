@@ -1,6 +1,6 @@
-import { z } from 'zod';
+import { z } from 'zod'
 
-export const forbiddenSecretPatterns = ['change-me', 'REPLACE_ME'];
+export const forbiddenSecretPatterns = ['change-me', 'REPLACE_ME']
 
 export const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
@@ -23,12 +23,12 @@ export const envSchema = z.object({
     .default('info'),
 }).refine(
   (data) => {
-    if (data.NODE_ENV === 'production' || data.AT_ENABLED) {
+    if (data.AT_ENABLED) {
       return !!data.AT_USERNAME && !!data.AT_API_KEY;
     }
     return true;
   },
-  { message: 'AT_USERNAME and AT_API_KEY are required when NODE_ENV=production or AT_ENABLED=true', path: ['AT_USERNAME'] },
+  { message: 'AT_USERNAME and AT_API_KEY are required when AT_ENABLED=true', path: ['AT_USERNAME'] },
 );
 
 export type Env = z.infer<typeof envSchema>;
