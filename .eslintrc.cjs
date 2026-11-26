@@ -13,4 +13,5 @@ module.exports = {
   rules: {
     'no-console': 'warn',
   },
+  ignorePatterns: ['dist/', 'node_modules/', '*.config.*'],
 };

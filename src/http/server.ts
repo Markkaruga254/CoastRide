@@ -8,6 +8,7 @@ import { errorHandler } from './error.js'
 import healthRoutes from './routes/health.js'
 import bookingsRoutes from './routes/bookings.js'
 import webhooksRoutes from './routes/webhooks.js'
+import ussdRoutes from './routes/ussd.js'
 
 function parseFormBody(payload: string | Buffer): Record<string, string> {
   const payloadStr = Buffer.isBuffer(payload) ? payload.toString('utf8') : payload
@@ -89,7 +90,10 @@ export function buildApp(
   app.setErrorHandler(errorHandler as (error: FastifyError, request: FastifyRequest, reply: FastifyReply) => void)
   app.register(healthRoutes)
   app.register(webhooksRoutes)
-  app.register(bookingsRoutes, deps)
+  app.register(ussdRoutes, { prefix: '/webhooks/:secret', ...deps })
+  if (env.NODE_ENV !== 'production') {
+    app.register(bookingsRoutes, deps)
+  }
   return app
 }
 

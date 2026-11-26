@@ -32,6 +32,7 @@ model Booking {
   partySize      Int
   state          TripState @default(REQUESTED)
   driverId       String?
+  ussdSessionId  String?   @unique
   driver         Driver?   @relation(fields: [driverId], references: [id])
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
@@ -44,6 +45,7 @@ model Booking {
   @@index([state])
   @@index([driverId])
   @@index([passengerPhone])
+  @@index([ussdSessionId])
 }
 
 model BookingDecline {
