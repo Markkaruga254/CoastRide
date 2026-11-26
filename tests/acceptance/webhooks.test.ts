@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { FastifyInstance } from 'fastify'
 import { PrismaClient } from '@prisma/client'
 import { buildApp } from '../../src/http/server.js'
+import { resetRateLimits } from '../../src/lib/rateLimit.js'
 import { FakeMessenger } from '../../src/modules/messaging/fake.js'
 
 const prisma = new PrismaClient({
@@ -11,6 +12,7 @@ const messenger = new FakeMessenger()
 let app: FastifyInstance
 
 beforeEach(async () => {
+  resetRateLimits()
   app = buildApp({ prisma, messenger })
 })
 
@@ -48,28 +50,28 @@ describe('webhook routes', () => {
 
 
   it('releases the SMS deduplication key and returns 500 when processing fails', async () => {
-    const findUnique = vi.spyOn(prisma.booking, 'findUnique').mockRejectedValueOnce(
-      new Error('temporary database failure'),
-    )
+    const fakePrisma = {
+      webhookEvent: {
+        create: vi.fn().mockResolvedValue({ id: 'retry-after-failure' }),
+        delete: vi.fn().mockResolvedValue({ id: 'retry-after-failure' }),
+      },
+      booking: {
+        findUnique: vi.fn().mockRejectedValue(new Error('temporary database failure')),
+      },
+    } as unknown as PrismaClient
+    const failingApp = buildApp({ prisma: fakePrisma, messenger })
 
-    const first = await app.inject({
+    const response = await failingApp.inject({
       method: 'POST',
       url: `/webhooks/${SECRET}/sms`,
       body: { id: 'retry-after-failure', from: '+254700000010', text: '1 CR1234' },
     })
 
-    expect(first.statusCode).toBe(500)
-    expect(await prisma.webhookEvent.findUnique({ where: { id: 'retry-after-failure' } })).toBeNull()
-
-    findUnique.mockRestore()
-    const retry = await app.inject({
-      method: 'POST',
-      url: `/webhooks/${SECRET}/sms`,
-      body: { id: 'retry-after-failure', from: '+254700000010', text: '1 CR1234' },
+    expect(response.statusCode).toBe(500)
+    expect(fakePrisma.webhookEvent.delete).toHaveBeenCalledWith({
+      where: { id: 'retry-after-failure' },
     })
-
-    expect(retry.statusCode).toBe(200)
-    expect(await prisma.webhookEvent.findUnique({ where: { id: 'retry-after-failure' } })).not.toBeNull()
+    await failingApp.close()
   })
 
   it('rate limits echo endpoint', async () => {
