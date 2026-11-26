@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: coastride
       POSTGRES_DB: coastride
     ports:
-      - "5432:5432"
+      - "${DB_HOST_PORT:-5432}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U coastride -d coastride"]
       interval: 5s
