@@ -374,13 +374,7 @@ export async function handleUssd(
       pickupAt: pickupAt.toISOString(),
       destination,
       partySize,
-    })
-
-    await prisma.booking.update({
-      where: { id: booking.id },
-      data: { ussdSessionId: sessionId },
-    }).catch(() => {
-      // Ignore unique constraint error - another request may have set it
+      ussdSessionId: sessionId,
     })
 
     return { type: 'END', text: `END Booked! Ref ${booking.ref}. We sent you an SMS.` }
