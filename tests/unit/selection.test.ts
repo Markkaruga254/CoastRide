@@ -14,8 +14,14 @@ const DRIVERS = [
 ]
 
 async function seedDrivers() {
-  await prisma.driver.createMany({ data: DRIVERS, skipDuplicates: true })
-  return prisma.driver.findMany({ orderBy: { id: 'asc' } })
+  await prisma.driver.createMany({
+    data: DRIVERS.map((driver, index) => ({
+      ...driver,
+      createdAt: new Date(Date.UTC(2026, 10, 26, 0, 0, index)),
+    })),
+    skipDuplicates: true,
+  })
+  return prisma.driver.findMany({ orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] })
 }
 
 async function decline(driverId: string, bookingId: string) {
@@ -23,11 +29,14 @@ async function decline(driverId: string, bookingId: string) {
 }
 
 beforeEach(async () => {
-  await prisma.driver.createMany({ data: DRIVERS, skipDuplicates: true })
+  await prisma.bookingDecline.deleteMany()
+  await prisma.booking.deleteMany()
+  await prisma.driver.deleteMany()
+  await seedDrivers()
 })
 
 describe('driver selection', () => {
-  it('picks the active driver with the lowest id', async () => {
+  it('picks the oldest active driver', async () => {
     const drivers = await seedDrivers()
     const booking = await prisma.booking.create({
       data: {
