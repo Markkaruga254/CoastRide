@@ -45,29 +45,185 @@ function isUniqueViolation(e: unknown): boolean {
 const TIME_ZONE = 'Africa/Nairobi'
 const log = pino({ level: 'error' })
 
+const MAX_MESSAGE_ATTEMPTS = 5
+const MESSAGE_LEASE_MS = 2 * 60_000
+const OFFER_TIMEOUT_MS = 3 * 60_000
+
+type StoredMessage = NonNullable<Awaited<ReturnType<PrismaClient['message']['findUnique']>>>
+
+async function deliverMessage(
+  deps: TripServiceDeps,
+  message: StoredMessage,
+  now = new Date(),
+): Promise<boolean> {
+  const claimed = await deps.prisma.message.updateMany({
+    where: {
+      id: message.id,
+      status: message.status,
+      attempts: message.attempts,
+    },
+    data: {
+      status: 'sending',
+      lockedAt: now,
+      attempts: { increment: 1 },
+    },
+  })
+  if (claimed.count === 0) return false
+
+  const attempt = message.attempts + 1
+  try {
+    const { providerId } = await deps.messenger.sendSms({
+      to: message.phone,
+      message: message.body,
+      bookingId: message.bookingId ?? undefined,
+    })
+    await deps.prisma.message.update({
+      where: { id: message.id },
+      data: {
+        status: 'sent',
+        providerId,
+        lockedAt: null,
+        nextAttemptAt: null,
+        lastError: null,
+      },
+    })
+  } catch (error) {
+    const backoffMs = Math.min(30_000 * 2 ** (attempt - 1), 30 * 60_000)
+    const messageText = error instanceof Error ? error.message : 'Unknown SMS provider error'
+    log.error({ err: error, messageId: message.id, attempt }, 'sms dispatch failed')
+    await deps.prisma.message.update({
+      where: { id: message.id },
+      data: {
+        status: 'failed',
+        lockedAt: null,
+        nextAttemptAt: attempt < MAX_MESSAGE_ATTEMPTS
+          ? new Date(now.getTime() + backoffMs)
+          : null,
+        lastError: messageText.slice(0, 500),
+      },
+    })
+  }
+  return true
+}
+
 async function dispatchQueued(
   deps: TripServiceDeps,
   queued: QueuedMessage[],
 ): Promise<void> {
-  for (const m of queued) {
-    try {
-      const { providerId } = await deps.messenger.sendSms({
-        to: m.to,
-        message: m.message,
-        bookingId: m.bookingId,
+  for (const item of queued) {
+    const message = await deps.prisma.message.findUnique({ where: { id: item.id } })
+    if (message) await deliverMessage(deps, message)
+  }
+}
+
+/** Retry queued/failed messages and reclaim expired delivery leases. */
+export async function dispatchPendingMessages(
+  deps: TripServiceDeps,
+  options: { now?: Date; limit?: number } = {},
+): Promise<number> {
+  const now = options.now ?? new Date()
+  const limit = options.limit ?? 50
+  const staleLease = new Date(now.getTime() - MESSAGE_LEASE_MS)
+  const candidates = await deps.prisma.message.findMany({
+    where: {
+      attempts: { lt: MAX_MESSAGE_ATTEMPTS },
+      OR: [
+        { status: 'queued' },
+        {
+          status: 'failed',
+          OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
+        },
+        { status: 'sending', lockedAt: { lte: staleLease } },
+      ],
+    },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    take: limit,
+  })
+
+  let processed = 0
+  for (const message of candidates) {
+    if (await deliverMessage(deps, message, now)) processed += 1
+  }
+  return processed
+}
+
+/** Expire unanswered offers and automatically try the next eligible driver. */
+export async function expirePendingOffers(
+  deps: TripServiceDeps,
+  now = new Date(),
+): Promise<number> {
+  const cutoff = new Date(now.getTime() - OFFER_TIMEOUT_MS)
+  const candidates = await deps.prisma.booking.findMany({
+    where: { state: 'OFFERED', updatedAt: { lte: cutoff } },
+    select: { id: true },
+    orderBy: { updatedAt: 'asc' },
+    take: 100,
+  })
+
+  let expiredCount = 0
+  for (const candidate of candidates) {
+    const expired = await deps.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(846271)`
+      const booking = await tx.booking.findUnique({ where: { id: candidate.id } })
+      if (!booking || booking.state !== 'OFFERED' || booking.updatedAt > cutoff) return false
+
+      const updated = await tx.booking.updateMany({
+        where: {
+          id: booking.id,
+          state: 'OFFERED',
+          driverId: booking.driverId,
+          updatedAt: { lte: cutoff },
+        },
+        data: { state: 'REQUESTED', driverId: null },
       })
-      await deps.prisma.message.update({
-        where: { id: m.id },
-        data: { status: 'sent', providerId },
+      if (updated.count === 0) return false
+
+      if (booking.driverId) {
+        await tx.bookingDecline.create({
+          data: { bookingId: booking.id, driverId: booking.driverId, reason: 'timeout' },
+        })
+      }
+      await tx.tripEvent.create({
+        data: { bookingId: booking.id, type: 'OFFER_TIMEOUT', payload: {} },
       })
-    } catch (e) {
-      log.error({ err: e, messageId: m.id }, 'sms dispatch failed')
-      await deps.prisma.message.update({
-        where: { id: m.id },
-        data: { status: 'failed' },
-      })
+      return true
+    })
+
+    if (expired) {
+      expiredCount += 1
+      await offerNextDriver(deps, { bookingId: candidate.id })
     }
   }
+  return expiredCount
+}
+
+/** Single authenticated cron entry point for dispatch recovery and offer expiry. */
+export async function processPendingWork(
+  deps: TripServiceDeps,
+  now = new Date(),
+): Promise<{ expiredOffers: number; retriedBookings: number; dispatchedMessages: number }> {
+  const expiredOffers = await expirePendingOffers(deps, now)
+  const retryCutoff = new Date(now.getTime() - 15_000)
+  const pendingBookings = await deps.prisma.booking.findMany({
+    where: { state: 'REQUESTED', createdAt: { lte: retryCutoff } },
+    select: { id: true },
+    orderBy: { createdAt: 'asc' },
+    take: 100,
+  })
+
+  let retriedBookings = 0
+  for (const booking of pendingBookings) {
+    try {
+      await offerNextDriver(deps, { bookingId: booking.id })
+      retriedBookings += 1
+    } catch (error) {
+      if (error instanceof IllegalTransitionError || error instanceof ConflictError) continue
+      throw error
+    }
+  }
+
+  const dispatchedMessages = await dispatchPendingMessages(deps, { now, limit: 100 })
+  return { expiredOffers, retriedBookings, dispatchedMessages }
 }
 
 export async function createBooking(
@@ -80,6 +236,7 @@ export async function createBooking(
     destination: string
     partySize: number
     passengerName?: string
+    ussdSessionId?: string
   },
 ) {
   const { prisma } = deps
@@ -102,6 +259,7 @@ export async function createBooking(
             destination: input.destination,
             partySize: input.partySize,
             state: 'REQUESTED',
+            ussdSessionId: input.ussdSessionId ?? null,
           },
         })
         await tx.tripEvent.create({
@@ -129,6 +287,12 @@ export async function createBooking(
       return result.booking
     } catch (e) {
       if (isUniqueViolation(e)) {
+        if (input.ussdSessionId) {
+          const existing = await prisma.booking.findUnique({
+            where: { ussdSessionId: input.ussdSessionId },
+          })
+          if (existing) return existing
+        }
         lastError = e
         continue
       }
@@ -145,8 +309,19 @@ export async function offerNextDriver(
   const { prisma } = deps
 
   const result = await prisma.$transaction(async (tx) => {
+    // Serialize driver allocation across requests. This is intentionally a
+    // single advisory lock for the MVP; it prevents two bookings claiming the
+    // same driver between the availability query and booking update.
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(846271)`
+
     const booking = await tx.booking.findUnique({ where: { id: bookingId } })
     if (!booking) throw new Error(`Booking ${bookingId} not found`)
+
+    // Make retries/concurrent callers idempotent once an offer is already set.
+    if (booking.state === 'OFFERED' && booking.driverId) {
+      const assignedDriver = await tx.driver.findUnique({ where: { id: booking.driverId } })
+      return { booking, driver: assignedDriver, queued: [] as QueuedMessage[] }
+    }
     if (booking.state !== 'REQUESTED') {
       throw new IllegalTransitionError(booking.state, 'DRIVER_OFFERED')
     }
@@ -155,30 +330,41 @@ export async function offerNextDriver(
       where: { bookingId },
       select: { driverId: true },
     })
-    const declinedIds = new Set(declines.map((d) => d.driverId))
+    const declinedIds = declines.map((d) => d.driverId)
 
-    const drivers = await tx.driver.findMany({
-      where: { active: true, id: { notIn: [...declinedIds] } },
-      orderBy: { id: 'asc' },
-      take: 1,
+    const driver = await tx.driver.findFirst({
+      where: {
+        active: true,
+        id: { notIn: declinedIds },
+        Booking: {
+          none: { state: { in: ['OFFERED', 'CONFIRMED', 'ARRIVED'] } },
+        },
+      },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     })
 
-    if (drivers.length === 0) {
-      const updated = await tx.booking.update({
-        where: { id: bookingId },
+    if (!driver) {
+      const updated = await tx.booking.updateMany({
+        where: { id: bookingId, state: 'REQUESTED' },
         data: { state: 'NO_DRIVER', driverId: null },
       })
+      if (updated.count === 0) throw new ConflictError('Booking changed while selecting a driver')
+      const updatedBooking = await tx.booking.findUnique({ where: { id: bookingId } })
+      if (!updatedBooking) throw new Error(`Booking ${bookingId} not found`)
       await tx.tripEvent.create({
         data: { bookingId, type: 'NO_DRIVER_AVAILABLE', payload: {} },
       })
-      return { booking: updated, driver: null, queued: [] as QueuedMessage[] }
+      return { booking: updatedBooking, driver: null, queued: [] as QueuedMessage[] }
     }
 
-    const driver = drivers[0]
-    const updated = await tx.booking.update({
-      where: { id: bookingId },
+    const updated = await tx.booking.updateMany({
+      where: { id: bookingId, state: 'REQUESTED' },
       data: { state: 'OFFERED', driverId: driver.id },
     })
+    if (updated.count === 0) throw new ConflictError('Booking changed while selecting a driver')
+    const updatedBooking = await tx.booking.findUnique({ where: { id: bookingId } })
+    if (!updatedBooking) throw new Error(`Booking ${bookingId} not found`)
+
     await tx.tripEvent.create({
       data: { bookingId, type: 'DRIVER_OFFERED', payload: {} },
     })
@@ -200,7 +386,7 @@ export async function offerNextDriver(
       },
     })
     return {
-      booking: updated,
+      booking: updatedBooking,
       driver,
       queued: [{ id: message.id, to: driver.phone, message: body, bookingId }],
     }
