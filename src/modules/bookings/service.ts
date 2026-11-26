@@ -239,6 +239,7 @@ export async function createBooking(
     passengerName?: string
     ussdSessionId?: string
   },
+  options: { awaitNotifications?: boolean } = {},
 ) {
   const { prisma } = deps
   const phone = normalizePhone(input.passengerPhone)
@@ -284,7 +285,13 @@ export async function createBooking(
           ],
         }
       })
-      await dispatchQueued(deps, result.queued)
+      if (options.awaitNotifications === false) {
+        void dispatchQueued(deps, result.queued).catch((error) => {
+          log.error({ err: error, bookingId: result.booking.id }, 'async booking notification dispatch failed')
+        })
+      } else {
+        await dispatchQueued(deps, result.queued)
+      }
       return result.booking
     } catch (e) {
       if (isUniqueViolation(e)) {
