@@ -68,7 +68,7 @@ const p = new PrismaClient();
   const b = await p.booking.findUnique({ where: { ref: '$REF' } });
   const o = await offerNextDriver({ prisma: p, messenger: { sendSms: async () => ({}) } }, { bookingId: b.id });
   console.log('Offered to driver:', o.driver?.name, o.driver?.phone);
-  await p.\\$disconnect();
+  await p.$disconnect();
 })();
 "
 
