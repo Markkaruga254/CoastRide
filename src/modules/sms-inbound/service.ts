@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client'
+import pino from 'pino'
 import { MessagingPort } from '../messaging/port.js'
 import { normalizePhone } from '../../lib/phone.js'
 import { maskPhone } from '../../lib/security.js'
@@ -15,10 +16,7 @@ import {
 } from '../bookings/service.js'
 import { helpText } from '../messaging/templates.js'
 
-const log = (msg: string, args: unknown) => {
-  // eslint-disable-next-line no-console
-  console.log(msg, args)
-}
+const log = pino({ level: process.env.LOG_LEVEL ?? 'info' })
 
 export async function handleInboundSms(
   deps: { prisma: PrismaClient; messenger: MessagingPort },
@@ -31,35 +29,44 @@ export async function handleInboundSms(
   const command = parseSms(text)
 
   if (command.kind === 'unknown') {
-    const driver = await prisma.driver.findUnique({ where: { phone } })
-    if (driver) {
+    const knownDriver = await prisma.driver.findUnique({ where: { phone } })
+    if (knownDriver) {
       try {
         await messenger.sendSms({ to: phone, message: helpText() })
-      } catch {
-        // Ignore SMS delivery failures for help messages
+      } catch (error) {
+        log.warn({ err: error, phone: maskPhone(phone), messageId }, 'failed to send SMS help reply')
       }
     }
-    log(`[SMS-INBOUND] unknown text from ${maskPhone(from)}: ${text}`, { messageId })
+    // Never write the inbound message body to logs; it may contain personal data.
+    log.info({ phone: maskPhone(phone), messageId }, 'unknown inbound SMS command')
     return
   }
 
   const booking = await prisma.booking.findUnique({ where: { ref: command.ref } })
-  if (!booking) {
-    // Don't leak whether a ref exists
-    return
-  }
+  if (!booking) return // Do not reveal whether a booking reference exists.
 
-  const driver = booking.driverId ? await prisma.driver.findUnique({ where: { id: booking.driverId } }) : null
-  const isAssignedDriver = driver ? driver.phone === phone : false
+  const senderDriver = await prisma.driver.findUnique({ where: { phone } })
+  const isAssignedDriver = !!senderDriver && booking.driverId === senderDriver.id
   const isPassenger = booking.passengerPhone === phone
+  const previousDecline = senderDriver
+    ? await prisma.bookingDecline.findUnique({
+        where: { bookingId_driverId: { bookingId: booking.id, driverId: senderDriver.id } },
+      })
+    : null
+  // If a decline committed but dispatching the next offer failed, allow the
+  // provider's retry to resume dispatch without trying to decline twice.
+  const isRetryingDecline =
+    command.kind === 'decline' && booking.state === 'REQUESTED' && !!previousDecline
 
   let authorized = false
   switch (command.kind) {
     case 'accept':
-    case 'decline':
     case 'arrived':
     case 'done':
       authorized = isAssignedDriver
+      break
+    case 'decline':
+      authorized = isAssignedDriver || isRetryingDecline
       break
     case 'delay':
       authorized = isAssignedDriver || isPassenger
@@ -70,10 +77,10 @@ export async function handleInboundSms(
   }
 
   if (!authorized) {
-    log(`[SMS-INBOUND] unauthorized ${command.kind} from ${maskPhone(phone)} for ${command.ref}`, {
-      messageId,
-      bookingId: booking.id,
-    })
+    log.warn(
+      { command: command.kind, phone: maskPhone(phone), bookingId: booking.id, messageId },
+      'unauthorized inbound SMS command ignored',
+    )
     return
   }
 
@@ -83,16 +90,10 @@ export async function handleInboundSms(
         await acceptOffer({ prisma, messenger }, { bookingId: booking.id, driverPhone: phone })
         break
       case 'decline':
-        await declineOffer({ prisma, messenger }, { bookingId: booking.id, driverPhone: phone })
-        // Auto-re-offer to the next available driver after a decline
-        try {
-          await offerNextDriver({ prisma, messenger }, { bookingId: booking.id })
-        } catch (e) {
-          log(
-            `[SMS-INBOUND] auto-re-offer failed after decline for ${command.ref}`,
-            { messageId, bookingId: booking.id, err: e },
-          )
+        if (!isRetryingDecline) {
+          await declineOffer({ prisma, messenger }, { bookingId: booking.id, driverPhone: phone })
         }
+        await offerNextDriver({ prisma, messenger }, { bookingId: booking.id })
         break
       case 'arrived':
         await markArrived({ prisma, messenger }, { bookingId: booking.id, driverPhone: phone })
@@ -107,11 +108,13 @@ export async function handleInboundSms(
         await cancelBooking({ prisma, messenger }, { bookingId: booking.id })
         break
     }
-  } catch (e) {
-    if (e instanceof ConflictError) {
-      log(`[SMS-INBOUND] conflict on ${command.kind} for ${command.ref}`, { messageId, bookingId: booking.id })
-    } else {
-      log(`[SMS-INBOUND] error on ${command.kind} for ${command.ref}`, { messageId, bookingId: booking.id, err: e })
+  } catch (error) {
+    if (error instanceof ConflictError) {
+      // Stale/duplicate commands are terminal business outcomes, not provider failures.
+      log.warn({ command: command.kind, bookingId: booking.id, messageId }, 'inbound SMS command conflict')
+      return
     }
+    log.error({ err: error, command: command.kind, bookingId: booking.id, messageId }, 'inbound SMS processing failed')
+    throw error
   }
 }
