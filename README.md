@@ -2,6 +2,11 @@
 
 Airport and SGR transfer coordination backend.
 
+## Requirements
+
+- Node.js 22 or newer for local development.
+- Docker Engine and Docker Compose for the containerized setup.
+
 ## Run locally with Docker Compose
 
 1. Copy the example environment file:
