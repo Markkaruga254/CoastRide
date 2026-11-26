@@ -213,4 +213,61 @@ describe('sms route', () => {
     expect(helpSms).toBeDefined()
     expect(helpSms.message).toContain('CoastRide')
   })
+
+  it('retries message after dedupe row is deleted on processing failure', async () => {
+    const booking = await createBookingForSms()
+    const { offerNextDriver } = await import('../../src/modules/bookings/service.js')
+    const offered = await offerNextDriver({ prisma, messenger: new FakeMessenger() }, { bookingId: booking.id })
+    const driver = offered.driver!
+
+    // First delivery with invalid phone - normalizePhone throws inside handleInboundSms
+    await app.inject({
+      method: 'POST',
+      url: `/webhooks/${SECRET}/sms`,
+      body: { id: 'msg-retry', from: '+12345', text: `1 ${booking.ref}` },
+    })
+
+    // Second delivery with same id but valid phone - dedupe row was deleted, so it processes
+    await app.inject({
+      method: 'POST',
+      url: `/webhooks/${SECRET}/sms`,
+      body: { id: 'msg-retry', from: driver.phone, text: `1 ${booking.ref}` },
+    })
+    const bAfter = await prisma.booking.findUnique({ where: { ref: booking.ref } })
+    expect(bAfter?.state).toBe('CONFIRMED')
+  })
+
+  it('accepts phoneNumber as sender field instead of from', async () => {
+    const booking = await createBookingForSms()
+    const { offerNextDriver } = await import('../../src/modules/bookings/service.js')
+    const offered = await offerNextDriver({ prisma, messenger: new FakeMessenger() }, { bookingId: booking.id })
+    const driver = offered.driver!
+
+    const messenger = new FakeMessenger()
+    app = buildApp({ prisma, messenger })
+
+    await app.inject({
+      method: 'POST',
+      url: `/webhooks/${SECRET}/sms`,
+      body: { id: 'msg-pn', phoneNumber: driver.phone, text: `1 ${booking.ref}` },
+    })
+    expect(messenger.sent.length).toBeGreaterThan(0)
+  })
+
+  it('processes message without id (no dedupe)', async () => {
+    const booking = await createBookingForSms()
+    const { offerNextDriver } = await import('../../src/modules/bookings/service.js')
+    const offered = await offerNextDriver({ prisma, messenger: new FakeMessenger() }, { bookingId: booking.id })
+    const driver = offered.driver!
+
+    const messenger = new FakeMessenger()
+    app = buildApp({ prisma, messenger })
+
+    await app.inject({
+      method: 'POST',
+      url: `/webhooks/${SECRET}/sms`,
+      body: { from: driver.phone, text: `1 ${booking.ref}` },
+    })
+    expect(messenger.sent.length).toBeGreaterThan(0)
+  })
 })
