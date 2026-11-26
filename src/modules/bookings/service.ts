@@ -164,7 +164,7 @@ export async function expirePendingOffers(
   let expiredCount = 0
   for (const candidate of candidates) {
     const expired = await deps.prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT pg_advisory_xact_lock(846271)`
+      await tx.$queryRaw`SELECT 1::int AS locked FROM (SELECT pg_advisory_xact_lock(846271)) AS advisory_lock`
       const booking = await tx.booking.findUnique({ where: { id: candidate.id } })
       if (!booking || booking.state !== 'OFFERED' || booking.updatedAt > cutoff) return false
 
@@ -313,7 +313,7 @@ export async function offerNextDriver(
     // Serialize driver allocation across requests. This is intentionally a
     // single advisory lock for the MVP; it prevents two bookings claiming the
     // same driver between the availability query and booking update.
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(846271)`
+    await tx.$queryRaw`SELECT 1::int AS locked FROM (SELECT pg_advisory_xact_lock(846271)) AS advisory_lock`
 
     const booking = await tx.booking.findUnique({ where: { id: bookingId } })
     if (!booking) throw new Error(`Booking ${bookingId} not found`)
