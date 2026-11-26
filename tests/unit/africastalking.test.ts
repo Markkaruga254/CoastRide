@@ -72,6 +72,27 @@ describe('AfricasTalkingMessenger', () => {
     })
   })
 
+
+  it('accepts a queued provider response (statusCode 102)', async () => {
+    __mockSend.mockResolvedValue({
+      SMSMessageData: {
+        Recipients: [{
+          number: '+254700000001',
+          status: 'Queued',
+          statusCode: 102,
+          messageId: 'AT-msg-queued',
+          cost: 'KES 0.8000',
+        }],
+      },
+    })
+
+    const messenger = new AfricasTalkingMessenger()
+    await expect(messenger.sendSms({
+      to: '+254700000001',
+      message: 'Test message',
+    })).resolves.toEqual({ providerId: 'AT-msg-queued' })
+  })
+
   it('throws when recipient list is empty', async () => {
     __mockSend.mockResolvedValue({
       SMSMessageData: {
@@ -95,7 +116,7 @@ describe('AfricasTalkingMessenger', () => {
           {
             number: '+254700000001',
             status: 'Failed',
-            statusCode: 102,
+            statusCode: 403,
             messageId: 'AT-msg-123',
             cost: 'KES 0.8000',
           },
