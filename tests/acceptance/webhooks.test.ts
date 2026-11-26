@@ -88,4 +88,30 @@ describe('ussd route', () => {
     expect(res.statusCode).toBe(200)
     expect(res.body).toContain('END Service temporarily unavailable')
   })
+
+  it('offers booking to first driver after USSD booking', async () => {
+    for (const d of [
+      { name: 'Alice Wanjiku', phone: '+254700000001', plate: 'KBA 123A', vehicle: 'Toyota Noah' },
+      { name: 'Brian Otieno', phone: '+254700000002', plate: 'KBC 456B', vehicle: 'Toyota Voxy' },
+    ]) {
+      await prisma.driver.upsert({ where: { phone: d.phone }, update: {}, create: d })
+    }
+
+    const ussdRes = await app.inject({
+      method: 'POST',
+      url: `/webhooks/${SECRET}/ussd`,
+      body: { sessionId: 'sess-offer-1', phoneNumber: '+254700000010', text: '1*KQ100*1430*Westlands*2*1' },
+    })
+    expect(ussdRes.statusCode).toBe(200)
+    expect(ussdRes.body).toContain('Booked!')
+
+    const refMatch = ussdRes.body.match(/CR\d{4}/)
+    expect(refMatch).toBeTruthy()
+    const ref = refMatch![0]
+
+    const booking = await prisma.booking.findUnique({ where: { ref } })
+    expect(booking).not.toBeNull()
+    expect(booking!.state).toBe('OFFERED')
+    expect(booking!.driverId).not.toBeNull()
+  })
 })

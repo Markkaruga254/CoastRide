@@ -6,6 +6,7 @@ import { MessagingPort } from '../../modules/messaging/port.js'
 import { verifySecret } from '../../lib/security.js'
 import { handleUssd } from '../../modules/ussd/handleUssd.js'
 import { normalizePhone } from '../../lib/phone.js'
+import { offerNextDriver } from '../../modules/bookings/service.js'
 
 const ussdBodySchema = z.object({
   sessionId: z.string().min(1),
@@ -46,6 +47,25 @@ const ussdRoute: FastifyPluginAsync<{ prisma: PrismaClient; messenger: Messaging
         { phoneNumber: phone, text, sessionId },
         { prisma: deps.prisma, messenger: deps.messenger, now: () => new Date() },
       )
+
+      // Fire and forget: offer the newly created booking to the first available driver.
+      // The USSD response must not wait on this or on SMS dispatch.
+      if (response.type === 'END' && response.text.includes('Booked!')) {
+        const log = request.log
+        void deps.prisma.booking
+          .findUnique({ where: { ussdSessionId: sessionId } })
+          .then((booking) => {
+            if (booking && booking.state === 'REQUESTED') {
+              return offerNextDriver({ prisma: deps.prisma, messenger: deps.messenger }, {
+                bookingId: booking.id,
+              })
+            }
+            return null
+          })
+          .catch((err) => {
+            log.error({ err, sessionId }, 'USSD post-booking offer failed')
+          })
+      }
 
       reply.type('text/plain')
       return response.text
