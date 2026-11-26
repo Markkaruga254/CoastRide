@@ -16,7 +16,13 @@ export async function selectNextDriver(
   const declinedIds = new Set(declines.map((d) => d.driverId))
 
   const drivers = await prisma.driver.findMany({
-    where: { active: true, id: { notIn: [...declinedIds] } },
+    where: {
+      active: true,
+      id: { notIn: [...declinedIds] },
+      Booking: {
+        none: { state: { in: ['OFFERED', 'CONFIRMED', 'ARRIVED'] } },
+      },
+    },
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     take: 1,
   })
