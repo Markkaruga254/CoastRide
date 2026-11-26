@@ -119,7 +119,6 @@ export async function listen(
   try {
     const address = await app.listen({ port: target, host })
     app.log.info(`listening on ${host}:${target}`)
-    console.info(`CoastRide API listening at ${address}`)
     callback?.(null, address)
     return address
   } catch (error) {
@@ -141,5 +140,8 @@ export async function closeServer(): Promise<void> {
 const self = fileURLToPath(import.meta.url)
 const invokedScript = process.argv[1] ? resolve(process.argv[1]) : ''
 if (invokedScript === self) {
-  listen()
+  void listen().catch((error) => {
+    console.error('CoastRide API failed to start', error)
+    process.exitCode = 1
+  })
 }
