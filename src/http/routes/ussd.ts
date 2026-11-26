@@ -10,11 +10,11 @@ import { allowRateLimit } from '../../lib/rateLimit.js'
 import { offerNextDriver } from '../../modules/bookings/service.js'
 
 const ussdBodySchema = z.object({
-  sessionId: z.string().min(1),
+  sessionId: z.string().min(1).max(256),
   serviceCode: z.string().optional(),
-  phoneNumber: z.string().min(1),
+  phoneNumber: z.string().min(1).max(32),
   networkCode: z.string().optional(),
-  text: z.string().default(''),
+  text: z.string().max(1_000).default(''),
 })
 
 const ussdRoute: FastifyPluginAsync<{ prisma: PrismaClient; messenger: MessagingPort }> = async (
