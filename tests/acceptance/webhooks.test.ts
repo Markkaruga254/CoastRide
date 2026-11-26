@@ -152,7 +152,11 @@ describe('ussd route', () => {
     expect(refMatch).toBeTruthy()
     const ref = refMatch![0]
 
-    const booking = await prisma.booking.findUnique({ where: { ref } })
+    let booking = await prisma.booking.findUnique({ where: { ref } })
+    for (let attempt = 0; attempt < 100 && booking?.state !== 'OFFERED'; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      booking = await prisma.booking.findUnique({ where: { ref } })
+    }
     expect(booking).not.toBeNull()
     expect(booking!.state).toBe('OFFERED')
     expect(booking!.driverId).not.toBeNull()
