@@ -339,6 +339,9 @@ export async function handleUssd(
   })
 
   if (existingBooking) {
+    if (existingBooking.passengerPhone !== phone) {
+      return { type: 'END', text: 'END Booking not found.' }
+    }
     if (existingBooking.state === 'REQUESTED') {
       return { type: 'END', text: `END Booked! Ref ${existingBooking.ref}. SMS confirmation will follow.` }
     }
@@ -451,8 +454,8 @@ export async function handleUssd(
         where: { ref },
         include: { driver: true },
       })
-      if (!booking) {
-        return { type: 'END', text: `END Booking ${ref} not found.` }
+      if (!booking || booking.passengerPhone !== phone) {
+        return { type: 'END', text: 'END Booking not found.' }
       }
       const stateLabel = getStateLabel(booking.state)
       let resultText = `END Booking ${ref}: ${stateLabel}`
