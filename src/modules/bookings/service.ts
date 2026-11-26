@@ -382,7 +382,7 @@ export async function offerNextDriver(
 
     const updated = await tx.booking.updateMany({
       where: { id: bookingId, state: 'REQUESTED' },
-      data: { state: 'OFFERED', driverId: driver.id },
+      data: { state: 'OFFERED', driverId: driver.id, updatedAt: new Date() },
     })
     if (updated.count === 0) throw new ConflictError('Booking changed while selecting a driver')
     const updatedBooking = await tx.booking.findUnique({ where: { id: bookingId } })
