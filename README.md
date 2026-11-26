@@ -49,9 +49,9 @@ curl http://localhost:3000/health
 BASE=http://localhost:3000
 
 # Create a booking (returns REF like CR1042)
-REF=$(curl -s -X POST $BASE/bookings \\
-  -H 'Content-Type: application/json' \\
-  -d '{"passengerPhone":"+254700000010","passengerName":"John Doe","pickupPoint":"MIA","arrivalRef":"BA123","pickupAt":"2026-11-24T14:30:00Z","destination":"Westlands","partySize":2}' \\
+REF=$(curl -s -X POST $BASE/bookings \
+  -H 'Content-Type: application/json' \
+  -d '{"passengerPhone":"+254700000010","passengerName":"John Doe","pickupPoint":"MIA","arrivalRef":"BA123","pickupAt":"2026-11-24T14:30:00Z","destination":"Westlands","partySize":2}' \
   | jq -r '.ref')
 echo "Booking ref: $REF"
 
@@ -73,22 +73,22 @@ const p = new PrismaClient();
 "
 
 # Driver accepts
-curl -s -X POST $BASE/bookings/$REF/driver-response \\
-  -H 'Content-Type: application/json' \\
-  -d '{"driverPhone":"+254700000001","action":"accept"}' \\
+curl -s -X POST $BASE/bookings/$REF/driver-response \
+  -H 'Content-Type: application/json' \
+  -d '{"driverPhone":"+254700000001","action":"accept"}' \
   | jq .
 
 # View booking (state: CONFIRMED)
 curl -s $BASE/bookings/$REF | jq .
 
 # Delay 90 minutes
-curl -s -X POST $BASE/bookings/$REF/delay \\
-  -H 'Content-Type: application/json' \\
+curl -s -X POST $BASE/bookings/$REF/delay \
+  -H 'Content-Type: application/json' \
   -d '{"minutes":90}' | jq .
 
 # Cancel
-curl -s -X POST $BASE/bookings/$REF/cancel \\
-  -H 'Content-Type: application/json' \\
+curl -s -X POST $BASE/bookings/$REF/cancel \
+  -H 'Content-Type: application/json' \
   -d '{}' | jq .
 ```
 
