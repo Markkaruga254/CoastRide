@@ -81,6 +81,11 @@ jobs:
           trap 'docker compose down -v' EXIT
           docker compose up --build -d db app
           if ! curl --fail --retry 30 --retry-delay 2 --retry-connrefused http://127.0.0.1:3000/health; then
-            docker compose logs app db
+            docker compose ps -a
+            APP_ID=$(docker compose ps -aq app)
+            if [ -n "$APP_ID" ]; then
+              docker inspect "$APP_ID" --format 'app exit={{.State.ExitCode}} error={{.State.Error}} path={{.Path}} args={{json .Args}}'
+            fi
+            docker compose logs --no-color app db
             exit 1
           fi
