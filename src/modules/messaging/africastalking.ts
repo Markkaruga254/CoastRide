@@ -53,7 +53,7 @@ export class AfricasTalkingMessenger implements MessagingPort {
       }
 
       const recipient = recipients[0]
-      if (recipient.statusCode !== 101 && recipient.statusCode !== 100) {
+      if (![100, 101, 102].includes(recipient.statusCode)) {
         throw new Error(`Africa's Talking send failed: ${recipient.status} (code ${recipient.statusCode})`)
       }
 
