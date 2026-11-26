@@ -38,6 +38,7 @@ services:
       AT_ENABLED: "false"
       AT_USERNAME: ${AT_USERNAME:-}
       AT_API_KEY: ${AT_API_KEY:-}
+      CRON_SECRET: ${CRON_SECRET:-}
       LOG_LEVEL: info
     ports:
       - "3000:3000"
