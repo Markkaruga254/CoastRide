@@ -99,6 +99,36 @@ describe('driver selection', () => {
     expect(selected?.id).toBe(drivers[2].id)
   })
 
+
+  it('skips drivers assigned to another active trip', async () => {
+    const drivers = await seedDrivers()
+    await prisma.booking.create({
+      data: {
+        ref: 'CR0098',
+        passengerPhone: '+254700000010',
+        pickupPoint: 'MIA',
+        pickupAt: new Date('2026-11-24T14:30:00Z'),
+        destination: 'Nyali',
+        partySize: 2,
+        state: 'CONFIRMED',
+        driverId: drivers[0].id,
+      },
+    })
+    const newBooking = await prisma.booking.create({
+      data: {
+        ref: 'CR0099',
+        passengerPhone: '+254700000011',
+        pickupPoint: 'SGR',
+        pickupAt: new Date('2026-11-24T15:00:00Z'),
+        destination: 'Bamburi',
+        partySize: 1,
+      },
+    })
+
+    const selected = await selectNextDriver(prisma, newBooking.id)
+    expect(selected?.id).toBe(drivers[1].id)
+  })
+
   it('returns null when no drivers are left', async () => {
     const drivers = await seedDrivers()
     const booking = await prisma.booking.create({
