@@ -80,13 +80,20 @@ jobs:
           export CRON_SECRET=ci-only-cron-secret-0123456789abcdef
           trap 'docker compose down -v' EXIT
           docker compose up --build -d db app
-          if ! curl --fail --retry 30 --retry-delay 2 --retry-connrefused http://127.0.0.1:3000/health; then
+          ready=0
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail http://127.0.0.1:3000/health; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" -ne 1 ]; then
             docker compose ps -a
             APP_ID=$(docker compose ps -aq app)
             if [ -n "$APP_ID" ]; then
               docker inspect "$APP_ID" --format 'app exit={{.State.ExitCode}} error={{.State.Error}} path={{.Path}} args={{json .Args}}'
             fi
-            docker compose run --rm --entrypoint sh app -c 'echo ENTRY_FILE; ls -l dist/start.js; sed -n "1,40p" dist/start.js; echo PRISMA_CLI; ls -l node_modules/.bin/prisma; npx prisma --version'
             docker compose logs --no-color app db
             exit 1
           fi
