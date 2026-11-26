@@ -101,6 +101,29 @@ Set `AT_ENABLED=true`, `AT_USERNAME=sandbox`, and the sandbox API key in your un
 
 For local development, expose the API with a trusted HTTPS tunnel and use its public URL in the dashboard. Never paste the API key or webhook secret into source control or issue comments.
 
+
+## Scheduled backend recovery
+
+The API exposes one authenticated job endpoint that:
+- expires unanswered driver offers after three minutes and offers the trip to the next eligible driver;
+- retries queued/failed SMS outbox rows with bounded exponential backoff;
+- retries old `REQUESTED` bookings whose initial driver dispatch did not complete.
+
+Generate a separate high-entropy secret and set `CRON_SECRET` in the API environment:
+
+```bash
+openssl rand -hex 32
+```
+
+Call the endpoint once per minute from a trusted scheduler (for example, a Render Cron Job):
+
+```bash
+curl --fail-with-body -X POST https://<api-host>/internal/jobs/process \
+  -H "x-cron-secret: $CRON_SECRET"
+```
+
+Set `CRON_SECRET` in the scheduler's secret environment too. The endpoint returns counts for expired offers, retried bookings and dispatched messages. Do not use the Africa's Talking webhook secret as the cron secret. If no cron secret is configured, the endpoint returns 404.
+
 ## Quality checks
 
 ```bash
