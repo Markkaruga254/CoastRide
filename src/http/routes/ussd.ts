@@ -50,7 +50,7 @@ const ussdRoute: FastifyPluginAsync<{ prisma: PrismaClient; messenger: Messaging
     try {
       const response = await handleUssd(
         { phoneNumber: phone, text, sessionId },
-        { prisma: deps.prisma, messenger: deps.messenger, now: () => new Date() },
+        { prisma: deps.prisma, messenger: deps.messenger, now: () => new Date(), awaitNotifications: false },
       )
 
       // Fire and forget: offer the newly created booking to the first available driver.
