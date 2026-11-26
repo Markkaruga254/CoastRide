@@ -15,6 +15,10 @@ export const envSchema = z.object({
   AT_ENABLED: z.string().transform((v) => v === 'true').default('false'),
   AT_USERNAME: z.string().optional(),
   AT_API_KEY: z.string().optional(),
+  CRON_SECRET: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(24).optional(),
+  ),
   SEED_DRIVER_PHONES: z.string().default(
     '+254700000001,+254700000002,+254700000003,+254700000004',
   ),
