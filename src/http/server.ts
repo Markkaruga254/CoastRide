@@ -10,6 +10,7 @@ import bookingsRoutes from './routes/bookings.js'
 import webhooksRoutes from './routes/webhooks.js'
 import ussdRoutes from './routes/ussd.js'
 import smsRoutes from './routes/sms.js'
+import jobsRoutes from './routes/jobs.js'
 
 function parseFormBody(payload: string | Buffer): Record<string, string> {
   const payloadStr = Buffer.isBuffer(payload) ? payload.toString('utf8') : payload
@@ -52,7 +53,7 @@ export function buildApp(
   const loggerOptions = {
     level: opts.logLevel ?? env.LOG_LEVEL,
     redact: {
-      paths: ['req.body.*', 'req.headers.authorization', 'req.headers.cookie'],
+      paths: ['req.body.*', 'req.headers.authorization', 'req.headers.cookie', 'req.headers.x-cron-secret'],
       censor: '[REDACTED]',
     },
     serializers: {
@@ -91,6 +92,7 @@ export function buildApp(
   app.register(webhooksRoutes)
   app.register(ussdRoutes, { prefix: '/webhooks/:secret', ...deps })
   app.register(smsRoutes, { prefix: '/webhooks/:secret', ...deps })
+  app.register(jobsRoutes, deps)
   if (env.NODE_ENV !== 'production') {
     app.register(bookingsRoutes, deps)
   }
