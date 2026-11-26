@@ -72,3 +72,14 @@ jobs:
 
       - name: Test
         run: npm test
+
+      - name: Docker Compose startup smoke test
+        run: |
+          export WEBHOOK_SECRET=ci-only-webhook-secret-0123456789abcdef
+          export CRON_SECRET=ci-only-cron-secret-0123456789abcdef
+          trap 'docker compose down -v' EXIT
+          docker compose up --build -d db app
+          if ! curl --fail --retry 30 --retry-delay 2 --retry-connrefused http://127.0.0.1:3000/health; then
+            docker compose logs app db
+            exit 1
+          fi
