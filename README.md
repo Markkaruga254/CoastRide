@@ -2,11 +2,33 @@
 
 Airport and SGR transfer coordination backend.
 
+## Run locally with Docker Compose
+
+1. Copy the example environment file:
+   ```bash
+   cp .env.example .env
+   ```
+2. Generate a dedicated webhook secret and put it in `.env`:
+   ```bash
+   openssl rand -hex 32
+   ```
+   Set the output as `WEBHOOK_SECRET`. Do not use the example placeholder or commit your real `.env` file.
+3. Start PostgreSQL and the API:
+   ```bash
+   docker compose up -d --build db app
+   ```
+4. Check API health:
+   ```bash
+   curl --fail http://localhost:3000/health
+   ```
+
+The Compose app runs with the Africa's Talking adapter disabled by default. To enable it, set `AT_ENABLED=true` and provide valid `AT_USERNAME` and `AT_API_KEY` values in your untracked `.env` file, then recreate the app container.
+
 ## Run Phase 1
 
 ```bash
-# 1. Start Postgres + app
-docker compose up -d db app
+# 1. Start Postgres
+docker compose up -d db
 
 # 2. Run migrations
 npm run db:migrate
@@ -37,16 +59,16 @@ echo "Booking ref: $REF"
 curl -s $BASE/bookings/$REF | jq .
 
 # Offer driver 1 (via service — no HTTP offer endpoint yet)
-npm run db:seed  # ensures drivers exist
+npm run db:seed
 node --env-file=.env -e "
 import { PrismaClient } from '@prisma/client';
 import { offerNextDriver } from './src/modules/bookings/service.js';
 const p = new PrismaClient();
 (async () => {
   const b = await p.booking.findUnique({ where: { ref: '$REF' } });
-  const o = await offerNextDriver({ p, messenger: { sendSms: async () => ({}) } }, { bookingId: b.id });
+  const o = await offerNextDriver({ prisma: p, messenger: { sendSms: async () => ({}) } }, { bookingId: b.id });
   console.log('Offered to driver:', o.driver?.name, o.driver?.phone);
-  await p.\$disconnect();
+  await p.$disconnect();
 })();
 "
 
@@ -62,12 +84,28 @@ curl -s $BASE/bookings/$REF | jq .
 # Delay 90 minutes
 curl -s -X POST $BASE/bookings/$REF/delay \
   -H 'Content-Type: application/json' \
-  -d '{"minutes":90}' \
-  | jq .
+  -d '{"minutes":90}' | jq .
 
 # Cancel
 curl -s -X POST $BASE/bookings/$REF/cancel \
   -H 'Content-Type: application/json' \
-  -d '{}' \
-  | jq .
+  -d '{}' | jq .
+```
+
+## Connect to the Africa's Talking sandbox
+
+Set `AT_ENABLED=true`, `AT_USERNAME=sandbox`, and the sandbox API key in your untracked `.env` file. Configure the public HTTPS callback URLs in the Africa's Talking dashboard:
+
+- USSD: `https://<host>/webhooks/<WEBHOOK_SECRET>/ussd`
+- Inbound SMS: `https://<host>/webhooks/<WEBHOOK_SECRET>/sms`
+
+For local development, expose the API with a trusted HTTPS tunnel and use its public URL in the dashboard. Never paste the API key or webhook secret into source control or issue comments.
+
+## Quality checks
+
+```bash
+npm run lint
+npm run typecheck
+npm run build
+npm test
 ```
