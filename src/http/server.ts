@@ -30,7 +30,7 @@ export function redactSecret(url: string, secret: string): string {
 
 export function buildApp(
   deps: { prisma: PrismaClient; messenger: MessagingPort },
-  opts: { isTest?: boolean; logStream?: NodeJS.WritableStream } = {}
+  opts: { isTest?: boolean; logStream?: NodeJS.WritableStream; logLevel?: string } = {}
 ): FastifyInstance {
   const env = getEnv()
 
@@ -50,7 +50,7 @@ export function buildApp(
   })
 
   const loggerOptions = {
-    level: env.LOG_LEVEL,
+    level: opts.logLevel ?? env.LOG_LEVEL,
     redact: {
       paths: ['req.body.*', 'req.headers.authorization', 'req.headers.cookie'],
       censor: '[REDACTED]',
