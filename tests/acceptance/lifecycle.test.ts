@@ -130,6 +130,11 @@ describe('trip lifecycle acceptance (1-5, 7)', () => {
     const final = await prisma.booking.findUnique({ where: { id: booking.id } })
     expect(final?.state).toBe('NO_DRIVER')
     expect(final?.driverId).toBeNull()
+    const noDriverNotice = await prisma.message.findFirst({
+      where: { bookingId: booking.id, phone: BOOKING_INPUT.passengerPhone },
+      orderBy: { createdAt: 'desc' },
+    })
+    expect(noDriverNotice?.body).toContain('no driver is available')
   })
 
   it('acceptance 5: delay 90 min in CONFIRMED keeps state, updates pickup_at, messages both', async () => {
