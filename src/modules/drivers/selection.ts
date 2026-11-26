@@ -23,7 +23,7 @@ export async function selectNextDriver(
         none: { state: { in: ['OFFERED', 'CONFIRMED', 'ARRIVED'] } },
       },
     },
-    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    orderBy: { id: 'asc' },
     take: 1,
   })
 
