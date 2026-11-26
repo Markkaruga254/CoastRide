@@ -137,7 +137,7 @@ export async function dispatchPendingMessages(
         { status: 'sending', lockedAt: { lte: staleLease } },
       ],
     },
-    orderBy: { id: 'asc' },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     take: limit,
   })
 
