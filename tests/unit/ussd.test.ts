@@ -207,6 +207,36 @@ describe('handleUssd', () => {
       expect(res.text).toContain('Invalid ref')
     })
 
+
+    it('does not reveal a booking through another passenger phone or session id', async () => {
+      const ownerPhone = '+254700000001'
+      const otherPhone = '+254700000002'
+      const sessionId = 'sess-private-owner'
+      await handleUssd({
+        phoneNumber: ownerPhone,
+        text: '1*KQ100*1430*Mombasa*2*1',
+        sessionId,
+      }, deps)
+      const booking = await prisma.booking.findUnique({ where: { ussdSessionId: sessionId } })
+      expect(booking).not.toBeNull()
+
+      const sessionLookup = await handleUssd({
+        phoneNumber: otherPhone,
+        text: '',
+        sessionId,
+      }, deps)
+      expect(sessionLookup.text).toBe('END Booking not found.')
+      expect(sessionLookup.text).not.toContain(booking!.ref)
+
+      const referenceLookup = await handleUssd({
+        phoneNumber: otherPhone,
+        text: `3*${booking!.ref}`,
+        sessionId: 'sess-other-passenger',
+      }, deps)
+      expect(referenceLookup.text).toBe('END Booking not found.')
+      expect(referenceLookup.text).not.toContain(booking!.ref)
+    })
+
     it('returns not found for unknown ref', async () => {
       const res = await handleUssd({ phoneNumber: '+254700000001', text: '3*CR9999', sessionId: 'sess-42' }, deps)
       expect(res.type).toBe('END')
