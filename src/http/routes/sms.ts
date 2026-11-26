@@ -51,6 +51,15 @@ const smsRoute: FastifyPluginAsync<{ prisma: PrismaClient; messenger: MessagingP
 
     const { id: messageId, from, phoneNumber, text } = result.data
     const sender = (from ?? phoneNumber)!
+    let normalizedSender: string
+    try {
+      normalizedSender = normalizePhone(sender)
+    } catch {
+      // Invalid phone numbers are terminal malformed callbacks; acknowledge
+      // them so the provider does not retry an unprocessable message forever.
+      request.log.warn({ messageId }, 'SMS callback has an invalid sender number')
+      return reply.status(200).send()
+    }
 
     if (messageId) {
       try {
@@ -64,7 +73,7 @@ const smsRoute: FastifyPluginAsync<{ prisma: PrismaClient; messenger: MessagingP
     try {
       await handleInboundSms(
         { prisma: deps.prisma, messenger: deps.messenger },
-        { from: normalizePhone(sender), text, messageId: messageId ?? '' },
+        { from: normalizedSender, text, messageId: messageId ?? '' },
       )
     } catch (err) {
       if (messageId) {
