@@ -1,4 +1,5 @@
 import fastify, { FastifyInstance, FastifyError, FastifyRequest, FastifyReply } from 'fastify'
+import pino from 'pino'
 import { PrismaClient } from '@prisma/client'
 import { getEnv } from '../config/env.js'
 import { MessagingPort } from '../modules/messaging/port.js'
@@ -49,34 +50,23 @@ export function buildApp(
     statusCode: err.statusCode,
   })
 
-  const logger = opts.isTest
-    ? false
-    : opts.logStream
-      ? {
-          level: env.LOG_LEVEL,
-          stream: opts.logStream,
-          redact: {
-            paths: ['req.body.*', 'req.headers.authorization', 'req.headers.cookie'],
-            censor: '[REDACTED]',
-          },
-          serializers: {
-            req: reqSerializer,
-            err: errSerializer,
-          },
-        }
-      : {
-          level: env.LOG_LEVEL,
-          redact: {
-            paths: ['req.body.*', 'req.headers.authorization', 'req.headers.cookie'],
-            censor: '[REDACTED]',
-          },
-          serializers: {
-            req: reqSerializer,
-            err: errSerializer,
-          },
-        }
+  const loggerOptions = {
+    level: env.LOG_LEVEL,
+    redact: {
+      paths: ['req.body.*', 'req.headers.authorization', 'req.headers.cookie'],
+      censor: '[REDACTED]',
+    },
+    serializers: {
+      req: reqSerializer,
+      err: errSerializer,
+    },
+  }
 
-  const app = fastify({ logger }) as FastifyInstance
+  const app = (opts.isTest
+    ? fastify({ logger: false })
+    : opts.logStream
+      ? fastify({ loggerInstance: pino(loggerOptions, opts.logStream) })
+      : fastify({ logger: loggerOptions })) as FastifyInstance
 
   // Add content type parser for form-urlencoded
   app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, function (request, payload, done) {
