@@ -12,6 +12,7 @@ import {
   cancelled,
   arrived,
   completed,
+  noDriverAvailable,
 } from '../messaging/templates.js'
 
 export interface TripServiceDeps {
@@ -354,7 +355,22 @@ export async function offerNextDriver(
       await tx.tripEvent.create({
         data: { bookingId, type: 'NO_DRIVER_AVAILABLE', payload: {} },
       })
-      return { booking: updatedBooking, driver: null, queued: [] as QueuedMessage[] }
+      const body = noDriverAvailable(booking.ref)
+      const message = await tx.message.create({
+        data: {
+          bookingId,
+          direction: 'OUTBOUND',
+          channel: 'sms',
+          phone: booking.passengerPhone,
+          body,
+          status: 'queued',
+        },
+      })
+      return {
+        booking: updatedBooking,
+        driver: null,
+        queued: [{ id: message.id, to: booking.passengerPhone, message: body, bookingId }],
+      }
     }
 
     const updated = await tx.booking.updateMany({
