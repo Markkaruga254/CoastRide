@@ -1,6 +1,7 @@
 import { listen } from './http/server.js'
 
 // Explicit executable entry point for containers and local development.
+console.info('CoastRide API entry point executing')
 try {
   await listen()
 } catch (error) {
