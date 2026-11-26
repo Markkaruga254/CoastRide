@@ -219,6 +219,24 @@ describe('trip lifecycle acceptance (1-5, 7)', () => {
   })
 
 
+
+  it('rejects a driver accepting an offer after its three-minute deadline', async () => {
+    const messenger = new FakeMessenger()
+    const deps = { prisma, messenger }
+    await seedDrivers()
+
+    const booking = await createBooking(deps, BOOKING_INPUT)
+    const offer = await offerNextDriver(deps, { bookingId: booking.id })
+    await prisma.booking.update({
+      where: { id: booking.id },
+      data: { updatedAt: new Date(Date.now() - 4 * 60_000) },
+    })
+
+    await expect(
+      acceptOffer(deps, { bookingId: booking.id, driverPhone: offer.driver!.phone }),
+    ).rejects.toBeInstanceOf(ConflictError)
+  })
+
   it('expires an unanswered offer and tries the next driver', async () => {
     const messenger = new FakeMessenger()
     const deps = { prisma, messenger }
