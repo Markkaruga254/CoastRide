@@ -25,3 +25,8 @@ Items marked **CONFIRMED** come from AT documentation and sample code. Items mar
 
 ## Security (design decision, not an AT feature)
 - AT callbacks are not signed. Protect webhooks with a secret path segment (`/webhooks/<WEBHOOK_SECRET>/...`), compare it in constant time, and return 404 on mismatch. Add rate limiting and Zod validation. Never log full phone numbers or message bodies at info level.
+
+## Send SMS response (CONFIRMED against the sandbox, 25 Nov 2026)
+- Shape: SMSMessageData.Message (summary string) and SMSMessageData.Recipients[], each with { number, cost, messageId, status, statusCode }.
+- Observed success: status "Success", statusCode 101, messageId starting "ATXid_".
+- HTTP success does not mean delivery success: a recipient can come back with a non-Success status. The adapter must treat any recipient whose status is not "Success" as a failure and throw.
