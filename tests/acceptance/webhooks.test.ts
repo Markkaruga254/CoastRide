@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { FastifyInstance } from 'fastify'
 import { PrismaClient } from '@prisma/client'
 import { buildApp } from '../../src/http/server.js'
@@ -46,6 +46,32 @@ describe('webhook routes', () => {
     expect(res.statusCode).toBe(200)
   })
 
+
+  it('releases the SMS deduplication key and returns 500 when processing fails', async () => {
+    const findUnique = vi.spyOn(prisma.booking, 'findUnique').mockRejectedValueOnce(
+      new Error('temporary database failure'),
+    )
+
+    const first = await app.inject({
+      method: 'POST',
+      url: `/webhooks/${SECRET}/sms`,
+      body: { id: 'retry-after-failure', from: '+254700000010', text: '1 CR1234' },
+    })
+
+    expect(first.statusCode).toBe(500)
+    expect(await prisma.webhookEvent.findUnique({ where: { id: 'retry-after-failure' } })).toBeNull()
+
+    findUnique.mockRestore()
+    const retry = await app.inject({
+      method: 'POST',
+      url: `/webhooks/${SECRET}/sms`,
+      body: { id: 'retry-after-failure', from: '+254700000010', text: '1 CR1234' },
+    })
+
+    expect(retry.statusCode).toBe(200)
+    expect(await prisma.webhookEvent.findUnique({ where: { id: 'retry-after-failure' } })).not.toBeNull()
+  })
+
   it('rate limits echo endpoint', async () => {
     // This test is hard to run reliably due to rate limit config
     // Just verify the endpoint works
@@ -87,6 +113,21 @@ describe('ussd route', () => {
     })
     expect(res.statusCode).toBe(200)
     expect(res.body).toContain('END Service temporarily unavailable')
+  })
+
+
+  it('rate limits the actual USSD callback endpoint', async () => {
+    let lastStatus = 0
+    for (let i = 0; i < 61; i++) {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/webhooks/${SECRET}/ussd`,
+        body: { sessionId: `rate-limit-${i}`, phoneNumber: '+254700000010', text: '' },
+      })
+      lastStatus = response.statusCode
+      if (i < 60) expect(response.statusCode).toBe(200)
+    }
+    expect(lastStatus).toBe(429)
   })
 
   it('offers booking to first driver after USSD booking', async () => {
