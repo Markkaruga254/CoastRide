@@ -101,6 +101,8 @@ export function buildApp(
   return app
 }
 
+let activeApp: FastifyInstance | null = null
+
 export async function listen(
   port?: number,
   callback?: (err: Error | null, address: string) => void,
@@ -109,20 +111,31 @@ export async function listen(
   const prisma = new PrismaClient()
   const messenger = env.AT_ENABLED ? new AfricasTalkingMessenger() : new FakeMessenger()
   const app = buildApp({ prisma, messenger }, { isTest: false })
+  app.addHook('onClose', async () => prisma.$disconnect())
+  activeApp = app
   const target = port ?? env.PORT
   const host = env.HOST
 
   try {
     const address = await app.listen({ port: target, host })
     app.log.info(`listening on ${host}:${target}`)
+    console.info(`CoastRide API listening at ${address}`)
     callback?.(null, address)
     return address
   } catch (error) {
     app.log.error({ err: error }, 'failed to start CoastRide API')
     callback?.(error as Error, '')
+    activeApp = null
     await prisma.$disconnect()
     throw error
   }
+}
+
+export async function closeServer(): Promise<void> {
+  if (!activeApp) return
+  const app = activeApp
+  activeApp = null
+  await app.close()
 }
 
 const self = fileURLToPath(import.meta.url)
