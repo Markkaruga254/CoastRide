@@ -101,23 +101,28 @@ export function buildApp(
   return app
 }
 
-export function listen(port?: number, callback?: (err: Error | null, address: string) => void) {
+export async function listen(
+  port?: number,
+  callback?: (err: Error | null, address: string) => void,
+): Promise<string> {
   const env = getEnv()
   const prisma = new PrismaClient()
   const messenger = env.AT_ENABLED ? new AfricasTalkingMessenger() : new FakeMessenger()
   const app = buildApp({ prisma, messenger }, { isTest: false })
   const target = port ?? env.PORT
   const host = env.HOST
-  app.listen({ port: target, host }, (err, address) => {
-    if (err) {
-      app.log.error({ err }, 'failed to start CoastRide API')
-      process.exitCode = 1
-      callback?.(err, address ?? '')
-      return
-    }
+
+  try {
+    const address = await app.listen({ port: target, host })
     app.log.info(`listening on ${host}:${target}`)
     callback?.(null, address)
-  })
+    return address
+  } catch (error) {
+    app.log.error({ err: error }, 'failed to start CoastRide API')
+    callback?.(error as Error, '')
+    await prisma.$disconnect()
+    throw error
+  }
 }
 
 const self = fileURLToPath(import.meta.url)
