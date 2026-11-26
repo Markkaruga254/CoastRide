@@ -3,7 +3,6 @@ import { FastifyInstance } from 'fastify'
 import { PrismaClient } from '@prisma/client'
 import { buildApp } from '../../src/http/server.js'
 import { FakeMessenger } from '../../src/modules/messaging/fake.js'
-import { offerNextDriver } from '../../src/modules/bookings/service.js'
 
 const prisma = new PrismaClient({
   datasourceUrl: process.env.TEST_DATABASE_URL,
@@ -38,8 +37,8 @@ describe('end-to-end scenario', () => {
     await prisma.$disconnect()
   })
 
-  it('full trip lifecycle via USSD booking and SMS keywords', async () => {
-    // 1. Passenger books via USSD
+  it('full trip lifecycle via webhooks only', async () => {
+    // 1. Passenger books via USSD (auto-offers to first available driver)
     const ussdRes = await app.inject({
       method: 'POST',
       url: `/webhooks/${SECRET}/ussd`,
@@ -56,50 +55,69 @@ describe('end-to-end scenario', () => {
     expect(refMatch).toBeTruthy()
     const ref = refMatch![0]
 
-    const booking = await prisma.booking.findUnique({ where: { ref } })
+    // Wait for fire-and-forget offer to complete
+    let booking
+    for (let i = 0; i < 100; i++) {
+      booking = await prisma.booking.findUnique({ where: { ref } })
+      if (booking?.state === 'OFFERED') break
+      await new Promise((r) => setTimeout(r, 50))
+    }
     expect(booking).not.toBeNull()
-    expect(booking!.state).toBe('REQUESTED')
+    expect(booking!.state).toBe('OFFERED')
+    expect(booking!.driverId).not.toBeNull()
+
+    const offeredDriver = await prisma.driver.findUnique({ where: { id: booking!.driverId! } })
+    expect(offeredDriver).not.toBeNull()
+    const offeredDriverPhone = offeredDriver!.phone
 
     // Confirmation SMS sent to passenger
     const confirmationSms = messenger.sent.find((s) => s.to === '+254700000010')
     expect(confirmationSms).toBeDefined()
     expect(confirmationSms!.message).toContain(ref)
 
-    // 2. Offer to driver 1 (Alice)
-    const offered1 = await offerNextDriver({ prisma, messenger }, { bookingId: booking!.id })
-    expect(offered1.booking.state).toBe('OFFERED')
-    expect(offered1.driver?.phone).toBe(DRIVERS[0].phone)
-
-    const offerSms1 = messenger.sent.find((s) => s.to === DRIVERS[0].phone)
+    // Offer SMS sent to the offered driver
+    const offerSms1 = messenger.sent.find((s) => s.to === offeredDriverPhone)
     expect(offerSms1).toBeDefined()
     expect(offerSms1!.message).toContain(ref)
+    expect(offerSms1!.message).toContain('Reply 1 accept / 2 decline')
 
-    // 3. Driver 1 declines via SMS
+    // 2. Offered driver declines via SMS (auto-re-offers to the other driver)
     const smsDecline = await app.inject({
       method: 'POST',
       url: `/webhooks/${SECRET}/sms`,
-      body: { id: 'e2e-msg-1', from: DRIVERS[0].phone, text: `2 ${ref}` },
+      body: { id: 'e2e-msg-1', from: offeredDriverPhone, text: `2 ${ref}` },
     })
     expect(smsDecline.statusCode).toBe(200)
 
-    const afterDecline = await prisma.booking.findUnique({ where: { ref } })
-    expect(afterDecline!.state).toBe('REQUESTED')
-    expect(afterDecline!.driverId).toBeNull()
+    // Wait for auto-re-offer to complete
+    let afterDecline
+    for (let i = 0; i < 100; i++) {
+      afterDecline = await prisma.booking.findUnique({ where: { ref } })
+      if (afterDecline!.state === 'OFFERED' && afterDecline!.driverId !== booking!.driverId) break
+      await new Promise((r) => setTimeout(r, 50))
+    }
+    expect(afterDecline).not.toBeNull()
+    expect(afterDecline!.state).toBe('OFFERED')
+    expect(afterDecline!.driverId).not.toBeNull()
+    expect(afterDecline!.driverId).not.toBe(booking!.driverId)
 
-    // 4. Offer to driver 2 (Brian) - skips Alice who declined
-    const offered2 = await offerNextDriver({ prisma, messenger }, { bookingId: booking!.id })
-    expect(offered2.booking.state).toBe('OFFERED')
-    expect(offered2.driver?.phone).toBe(DRIVERS[1].phone)
+    const reOfferedDriver = await prisma.driver.findUnique({ where: { id: afterDecline!.driverId! } })
+    const acceptingDriverPhone = reOfferedDriver!.phone
+    const acceptingDriverName = reOfferedDriver!.name
+    const acceptingDriverPlate = reOfferedDriver!.plate
 
-    const offerSms2 = messenger.sent.find((s) => s.to === DRIVERS[1].phone)
+    // Accepting driver should be different from the declining driver
+    expect(acceptingDriverPhone).not.toBe(offeredDriverPhone)
+
+    const offerSms2 = messenger.sent.find((s) => s.to === acceptingDriverPhone)
     expect(offerSms2).toBeDefined()
     expect(offerSms2!.message).toContain(ref)
 
-    // 5. Driver 2 accepts via SMS
+    // 3. Other driver accepts via SMS
     const smsAccept = await app.inject({
       method: 'POST',
       url: `/webhooks/${SECRET}/sms`,
-      body: { id: 'e2e-msg-2', from: DRIVERS[1].phone, text: `1 ${ref}` },
+      body: { id: 'e2e-msg-2', from: acceptingDriverPhone, text: `1 ${ref}` },
     })
     expect(smsAccept.statusCode).toBe(200)
 
@@ -111,16 +129,16 @@ describe('end-to-end scenario', () => {
       (s) => s.to === '+254700000010' && s.message.includes('confirmed')
     )
     expect(confirmedSms).toBeDefined()
-    expect(confirmedSms!.message).toContain(DRIVERS[1].name)
-    expect(confirmedSms!.message).toContain(DRIVERS[1].plate)
+    expect(confirmedSms!.message).toContain(acceptingDriverName)
+    expect(confirmedSms!.message).toContain(acceptingDriverPlate)
 
     const beforeDelay = afterAccept!.pickupAt.getTime()
 
-    // 6. Driver 2 delays by 90 minutes via SMS
+    // 4. Accepting driver delays by 90 minutes via SMS
     const smsDelay = await app.inject({
       method: 'POST',
       url: `/webhooks/${SECRET}/sms`,
-      body: { id: 'e2e-msg-3', from: DRIVERS[1].phone, text: `DELAY 90 ${ref}` },
+      body: { id: 'e2e-msg-3', from: acceptingDriverPhone, text: `DELAY 90 ${ref}` },
     })
     expect(smsDelay.statusCode).toBe(200)
 
@@ -135,15 +153,15 @@ describe('end-to-end scenario', () => {
     expect(delaySmsToPassenger).toBeDefined()
 
     const delaySmsToDriver = messenger.sent.find(
-      (s) => s.to === DRIVERS[1].phone && s.message.includes('delayed 90 min')
+      (s) => s.to === acceptingDriverPhone && s.message.includes('delayed 90 min')
     )
     expect(delaySmsToDriver).toBeDefined()
 
-    // 7. Driver 2 arrives via SMS
+    // 5. Accepting driver arrives via SMS
     const smsArrived = await app.inject({
       method: 'POST',
       url: `/webhooks/${SECRET}/sms`,
-      body: { id: 'e2e-msg-4', from: DRIVERS[1].phone, text: `ARRIVED ${ref}` },
+      body: { id: 'e2e-msg-4', from: acceptingDriverPhone, text: `ARRIVED ${ref}` },
     })
     expect(smsArrived.statusCode).toBe(200)
 
@@ -155,11 +173,11 @@ describe('end-to-end scenario', () => {
     )
     expect(arrivedSms).toBeDefined()
 
-    // 8. Driver 2 completes via SMS
+    // 6. Accepting driver completes via SMS
     const smsDone = await app.inject({
       method: 'POST',
       url: `/webhooks/${SECRET}/sms`,
-      body: { id: 'e2e-msg-5', from: DRIVERS[1].phone, text: `DONE ${ref}` },
+      body: { id: 'e2e-msg-5', from: acceptingDriverPhone, text: `DONE ${ref}` },
     })
     expect(smsDone.statusCode).toBe(200)
 
@@ -177,19 +195,19 @@ describe('end-to-end scenario', () => {
       .map((s) => s.message)
     expect(passengerSms).toHaveLength(5)
     expect(passengerSms[0]).toContain(ref) // booking confirmation
-    expect(passengerSms[1]).toContain(DRIVERS[1].name) // driver confirmed
-    expect(passengerSms[1]).toContain(DRIVERS[1].plate)
+    expect(passengerSms[1]).toContain(acceptingDriverName) // driver confirmed
+    expect(passengerSms[1]).toContain(acceptingDriverPlate)
     expect(passengerSms[2]).toContain('delayed 90 min') // delay notice
     expect(passengerSms[3]).toContain('has arrived') // arrived
     expect(passengerSms[4]).toContain('completed') // completed
 
-    // Assert messages to driver 2
-    const driver2Sms = messenger.sent
-      .filter((s) => s.to === DRIVERS[1].phone)
+    // Assert messages to accepting driver
+    const acceptingDriverSms = messenger.sent
+      .filter((s) => s.to === acceptingDriverPhone)
       .map((s) => s.message)
-    expect(driver2Sms).toHaveLength(2)
-    expect(driver2Sms[0]).toContain(ref) // offer
-    expect(driver2Sms[0]).toContain('Reply 1 accept / 2 decline')
-    expect(driver2Sms[1]).toContain('delayed 90 min') // delay notice
+    expect(acceptingDriverSms).toHaveLength(2)
+    expect(acceptingDriverSms[0]).toContain(ref) // offer
+    expect(acceptingDriverSms[0]).toContain('Reply 1 accept / 2 decline')
+    expect(acceptingDriverSms[1]).toContain('delayed 90 min') // delay notice
   })
 })

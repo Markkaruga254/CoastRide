@@ -10,6 +10,7 @@ import {
   completeTrip,
   applyDelay,
   cancelBooking,
+  offerNextDriver,
   ConflictError,
 } from '../bookings/service.js'
 import { helpText } from '../messaging/templates.js'
@@ -83,6 +84,15 @@ export async function handleInboundSms(
         break
       case 'decline':
         await declineOffer({ prisma, messenger }, { bookingId: booking.id, driverPhone: phone })
+        // Auto-re-offer to the next available driver after a decline
+        try {
+          await offerNextDriver({ prisma, messenger }, { bookingId: booking.id })
+        } catch (e) {
+          log(
+            `[SMS-INBOUND] auto-re-offer failed after decline for ${command.ref}`,
+            { messageId, bookingId: booking.id, err: e },
+          )
+        }
         break
       case 'arrived':
         await markArrived({ prisma, messenger }, { bookingId: booking.id, driverPhone: phone })
