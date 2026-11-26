@@ -62,11 +62,20 @@ export function buildApp(
     },
   }
 
-  const app = (opts.isTest
-    ? fastify({ logger: false })
-    : opts.logStream
-      ? fastify({ loggerInstance: pino(loggerOptions, opts.logStream) })
-      : fastify({ logger: loggerOptions })) as FastifyInstance
+  const logger = opts.isTest
+    ? false
+    : {
+        ...loggerOptions,
+        ...(opts.logStream ? { stream: opts.logStream } : {}),
+      }
+
+  const app = fastify({ logger }) as FastifyInstance
+
+  // Emit a structured completion record without logging request bodies.
+  app.addHook('onResponse', (request, reply, done) => {
+    request.log.info({ req: request, statusCode: reply.statusCode }, 'request completed')
+    done()
+  })
 
   // Add content type parser for form-urlencoded
   app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, function (request, payload, done) {
