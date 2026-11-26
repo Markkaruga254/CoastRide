@@ -378,7 +378,7 @@ export async function handleUssd(
       ussdSessionId: sessionId,
     }, { awaitNotifications: deps.awaitNotifications })
 
-    return { type: 'END', text: `END Booked! Ref ${booking.ref}. We sent you an SMS.` }
+    return { type: 'END', text: `END Booked! Ref ${booking.ref}. SMS confirmation will follow.` }
   }
 
   // No terminal action: render the screen for the current step
