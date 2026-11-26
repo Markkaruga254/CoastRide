@@ -37,16 +37,9 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm install
-
-      - name: Export updated lockfile
-        run: |
-          echo LOCKFILE_START
-          cat package-lock.json
-          echo LOCKFILE_END
+        run: npm ci
 
       - name: Audit production dependencies
-        continue-on-error: true
         run: npm audit --omit=dev --audit-level=high
 
       - name: Configure test environment
