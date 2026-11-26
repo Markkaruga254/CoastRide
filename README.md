@@ -124,6 +124,11 @@ curl --fail-with-body -X POST https://<api-host>/internal/jobs/process \
 
 Set `CRON_SECRET` in the scheduler's secret environment too. The endpoint returns counts for expired offers, retried bookings and dispatched messages. Do not use the Africa's Talking webhook secret as the cron secret. If no cron secret is configured, the endpoint returns 404.
 
+
+### SMS status semantics
+
+A message marked `sent` means Africa's Talking accepted it for processing (immediate status codes 100 Processed, 101 Sent, or 102 Queued). It does **not** guarantee delivery to the passenger's handset. Final handset delivery reports are not yet wired into CoastRide; add the Africa's Talking SMS delivery-report callback before using the database status as a delivery guarantee.
+
 ## Quality checks
 
 ```bash
