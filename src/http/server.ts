@@ -1,4 +1,6 @@
 import fastify, { FastifyInstance, FastifyError, FastifyRequest, FastifyReply } from 'fastify'
+import { fileURLToPath } from 'node:url'
+import { resolve } from 'node:path'
 import { PrismaClient } from '@prisma/client'
 import { getEnv } from '../config/env.js'
 import { MessagingPort } from '../modules/messaging/port.js'
@@ -107,14 +109,19 @@ export function listen(port?: number, callback?: (err: Error | null, address: st
   const target = port ?? env.PORT
   const host = env.HOST
   app.listen({ port: target, host }, (err, address) => {
-    if (!err) {
-      app.log.info(`listening on ${host}:${target}`)
+    if (err) {
+      app.log.error({ err }, 'failed to start CoastRide API')
+      process.exitCode = 1
+      callback?.(err, address ?? '')
+      return
     }
-    callback?.(err, address)
+    app.log.info(`listening on ${host}:${target}`)
+    callback?.(null, address)
   })
 }
 
-const self = new URL(import.meta.url).pathname
-if (process.argv[1] === self) {
+const self = fileURLToPath(import.meta.url)
+const invokedScript = process.argv[1] ? resolve(process.argv[1]) : ''
+if (invokedScript === self) {
   listen()
 }
