@@ -6,6 +6,7 @@ import { MessagingPort } from '../../modules/messaging/port.js'
 import { verifySecret } from '../../lib/security.js'
 import { handleUssd } from '../../modules/ussd/handleUssd.js'
 import { normalizePhone } from '../../lib/phone.js'
+import { allowRateLimit } from '../../lib/rateLimit.js'
 import { offerNextDriver } from '../../modules/bookings/service.js'
 
 const ussdBodySchema = z.object({
@@ -26,6 +27,10 @@ const ussdRoute: FastifyPluginAsync<{ prisma: PrismaClient; messenger: Messaging
     const secret = params.secret
     if (!verifySecret(secret, env.WEBHOOK_SECRET)) {
       return reply.status(404).send()
+    }
+    if (!allowRateLimit(`ussd:${request.ip}`, 60, 60_000)) {
+      reply.type('text/plain')
+      return reply.status(429).send('END Service temporarily unavailable. Please try again.')
     }
   })
 
