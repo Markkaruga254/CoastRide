@@ -75,6 +75,7 @@ jobs:
 
       - name: Docker Compose startup smoke test
         run: |
+          export DB_HOST_PORT=55432
           export WEBHOOK_SECRET=ci-only-webhook-secret-0123456789abcdef
           export CRON_SECRET=ci-only-cron-secret-0123456789abcdef
           trap 'docker compose down -v' EXIT
