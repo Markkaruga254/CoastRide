@@ -408,15 +408,25 @@ export async function acceptOffer(
   const result = await prisma.$transaction(async (tx) => {
     const booking = await tx.booking.findUnique({ where: { id: bookingId } })
     if (!booking) throw new Error(`Booking ${bookingId} not found`)
-    if (booking.state !== 'OFFERED' || booking.driverId !== driver.id) {
+    const offerCutoff = new Date(Date.now() - OFFER_TIMEOUT_MS)
+    if (
+      booking.state !== 'OFFERED' ||
+      booking.driverId !== driver.id ||
+      booking.updatedAt <= offerCutoff
+    ) {
       throw new ConflictError(
-        `Booking ${bookingId} is not offered to driver ${driver.id}`,
+        `Booking ${bookingId} is not currently offered to driver ${driver.id}`,
       )
     }
 
     applyEvent('OFFERED', 'DRIVER_ACCEPTED')
     const updated = await tx.booking.updateMany({
-      where: { id: bookingId, state: 'OFFERED', driverId: driver.id },
+      where: {
+        id: bookingId,
+        state: 'OFFERED',
+        driverId: driver.id,
+        updatedAt: { gt: offerCutoff },
+      },
       data: { state: 'CONFIRMED' },
     })
     if (updated.count === 0) {
