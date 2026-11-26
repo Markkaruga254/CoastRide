@@ -7,6 +7,7 @@ export interface UssdDeps {
   prisma: PrismaClient
   messenger: MessagingPort
   now: () => Date
+  awaitNotifications?: boolean
 }
 
 export interface UssdInput {
@@ -339,7 +340,7 @@ export async function handleUssd(
 
   if (existingBooking) {
     if (existingBooking.state === 'REQUESTED') {
-      return { type: 'END', text: `END Booked! Ref ${existingBooking.ref}. We sent you an SMS.` }
+      return { type: 'END', text: `END Booked! Ref ${existingBooking.ref}. SMS confirmation will follow.` }
     }
     const stateLabel = getStateLabel(existingBooking.state)
     let text = `END Booking ${existingBooking.ref}: ${stateLabel}`
@@ -375,7 +376,7 @@ export async function handleUssd(
       destination,
       partySize,
       ussdSessionId: sessionId,
-    })
+    }, { awaitNotifications: deps.awaitNotifications })
 
     return { type: 'END', text: `END Booked! Ref ${booking.ref}. We sent you an SMS.` }
   }
