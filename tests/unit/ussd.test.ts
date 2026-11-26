@@ -253,6 +253,31 @@ describe('handleUssd', () => {
       expect(bookings).toHaveLength(1)
     })
 
+
+    it('returns after persisting the booking when SMS delivery is still pending', async () => {
+      const slowMessenger = {
+        sendSms: async () => new Promise<{ providerId?: string }>(() => undefined),
+      }
+      const input = {
+        phoneNumber: '+254700000001',
+        text: '1*KQ100*1430*Mombasa*2*1',
+        sessionId: 'sess-async-sms',
+      }
+
+      const response = await handleUssd(input, {
+        ...deps,
+        messenger: slowMessenger,
+        awaitNotifications: false,
+      })
+
+      expect(response.type).toBe('END')
+      expect(response.text).toContain('SMS confirmation will follow')
+      const booking = await prisma.booking.findUnique({
+        where: { ussdSessionId: input.sessionId },
+      })
+      expect(booking).not.toBeNull()
+    })
+
     it('returns existing booking on retry with same sessionId', async () => {
       const res1 = await handleUssd({ phoneNumber: '+254700000001', text: '1*KQ100*1430*Mombasa*2*1', sessionId: 'sess-50' }, deps)
       expect(res1.type).toBe('END')
