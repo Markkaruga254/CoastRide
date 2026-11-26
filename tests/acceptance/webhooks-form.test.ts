@@ -42,8 +42,8 @@ describe('secret redaction in logs', () => {
     })
     expect(res.statusCode).toBe(200)
 
-    // Wait a tick for logs to flush
-    await new Promise((r) => setImmediate(r))
+    // Closing the app flushes Fastify/Pino request logs to the supplied stream.
+    await app.close()
 
     const logText = Buffer.concat(chunks).toString('utf8')
     expect(logText).not.toContain(SECRET)
