@@ -33,5 +33,8 @@
   },
   "prisma": {
     "schema": "prisma/schema.prisma"
+  },
+  "engines": {
+    "node": ">=22.0.0"
   }
 }
