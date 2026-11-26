@@ -29,3 +29,9 @@ export function allowRateLimit(
   buckets.set(key, { count: 1, resetAt: now + windowMs })
   return true
 }
+
+/** Clear in-memory buckets between isolated integration tests. */
+export function resetRateLimits(): void {
+  buckets.clear()
+  operations = 0
+}
