@@ -232,6 +232,27 @@ describe('handleUssd', () => {
   })
 
   describe('Idempotency', () => {
+
+    it('creates only one booking for concurrent final confirmations in one USSD session', async () => {
+      const input = {
+        phoneNumber: '+254700000001',
+        text: '1*KQ100*1430*Mombasa*2*1',
+        sessionId: 'sess-concurrent-confirm',
+      }
+
+      const [first, second] = await Promise.all([
+        handleUssd(input, deps),
+        handleUssd(input, deps),
+      ])
+
+      expect(first.type).toBe('END')
+      expect(second.text).toBe(first.text)
+      const bookings = await prisma.booking.findMany({
+        where: { ussdSessionId: input.sessionId },
+      })
+      expect(bookings).toHaveLength(1)
+    })
+
     it('returns existing booking on retry with same sessionId', async () => {
       const res1 = await handleUssd({ phoneNumber: '+254700000001', text: '1*KQ100*1430*Mombasa*2*1', sessionId: 'sess-50' }, deps)
       expect(res1.type).toBe('END')
