@@ -32,7 +32,7 @@ describe('secret redaction in logs', () => {
       },
     })
 
-    const app = buildApp({ prisma, messenger }, { isTest: false, logStream })
+    const app = buildApp({ prisma, messenger }, { isTest: false, logStream, logLevel: 'info' })
 
     const res = await app.inject({
       method: 'POST',
