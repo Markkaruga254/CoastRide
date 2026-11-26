@@ -67,7 +67,7 @@ describe('AfricasTalkingMessenger', () => {
   })
 
   it('uses the live endpoint for a non-sandbox username', async () => {
-    ;(getEnv as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+    (getEnv as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
       ...validEnv,
       AT_USERNAME: 'coastride-live',
     })
