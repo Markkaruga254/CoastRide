@@ -270,4 +270,63 @@ describe('sms route', () => {
     })
     expect(messenger.sent.length).toBeGreaterThan(0)
   })
+
+  it('handles IllegalTransitionError like ConflictError - returns 200, sends actionNotAvailable to driver', async () => {
+    const booking = await createBookingForSms()
+    const { offerNextDriver, completeTrip, markArrived, acceptOffer } = await import('../../src/modules/bookings/service.js')
+    
+    // Complete the trip first to make it COMPLETED state
+    const offered = await offerNextDriver({ prisma, messenger: new FakeMessenger() }, { bookingId: booking.id })
+    const driver = offered.driver!
+    await acceptOffer({ prisma, messenger: new FakeMessenger() }, { bookingId: booking.id, driverPhone: driver.phone })
+    await markArrived({ prisma, messenger: new FakeMessenger() }, { bookingId: booking.id, driverPhone: driver.phone })
+    await completeTrip({ prisma, messenger: new FakeMessenger() }, { bookingId: booking.id, driverPhone: driver.phone })
+
+    // Now trip is COMPLETED, try to DELAY (illegal transition - PICKUP_DELAYED not allowed in COMPLETED)
+    const messenger = new FakeMessenger()
+    app = buildApp({ prisma, messenger })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/webhooks/${SECRET}/sms`,
+      body: { id: 'msg-illegal', from: driver.phone, text: `DELAY 10 ${booking.ref}` },
+    })
+    
+    expect(res.statusCode).toBe(200)
+    
+    // Should send actionNotAvailable to the driver
+    const actionNotAvail = messenger.sent.find((s) => s.to === driver.phone)
+    expect(actionNotAvail).toBeDefined()
+    expect(actionNotAvail!.message).toContain('isn\'t available right now')
+    expect(actionNotAvail!.message).toContain(booking.ref)
+  })
+
+  it('handles IllegalTransitionError for passenger cancel on completed trip - sends actionNotAvailable', async () => {
+    const booking = await createBookingForSms()
+    const { offerNextDriver, completeTrip, markArrived, acceptOffer } = await import('../../src/modules/bookings/service.js')
+    
+    // Complete the trip first to make it COMPLETED state
+    const offered = await offerNextDriver({ prisma, messenger: new FakeMessenger() }, { bookingId: booking.id })
+    const driver = offered.driver!
+    await acceptOffer({ prisma, messenger: new FakeMessenger() }, { bookingId: booking.id, driverPhone: driver.phone })
+    await markArrived({ prisma, messenger: new FakeMessenger() }, { bookingId: booking.id, driverPhone: driver.phone })
+    await completeTrip({ prisma, messenger: new FakeMessenger() }, { bookingId: booking.id, driverPhone: driver.phone })
+
+    const messenger = new FakeMessenger()
+    app = buildApp({ prisma, messenger })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/webhooks/${SECRET}/sms`,
+      body: { id: 'msg-illegal-2', from: '+254700000010', text: `CANCEL ${booking.ref}` },
+    })
+    
+    expect(res.statusCode).toBe(200)
+    
+    // Should send actionNotAvailable to the passenger
+    const actionNotAvail = messenger.sent.find((s) => s.to === '+254700000010')
+    expect(actionNotAvail).toBeDefined()
+    expect(actionNotAvail!.message).toContain('isn\'t available right now')
+    expect(actionNotAvail!.message).toContain(booking.ref)
+  })
 })
