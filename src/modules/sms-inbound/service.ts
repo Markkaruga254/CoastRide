@@ -113,6 +113,13 @@ export async function handleInboundSms(
     if (error instanceof ConflictError) {
       // Stale/duplicate commands are terminal business outcomes, not provider failures.
       log.warn({ command: command.kind, bookingId: booking.id, messageId }, 'inbound SMS command conflict')
+      if (isAssignedDriver || isPassenger) {
+        try {
+          await messenger.sendSms({ to: phone, message: actionNotAvailable(booking.ref) })
+        } catch (sendError) {
+          log.warn({ err: sendError, phone: maskPhone(phone), messageId }, 'failed to send actionNotAvailable SMS')
+        }
+      }
       return
     }
     if (error instanceof IllegalTransitionError) {

@@ -329,4 +329,173 @@ describe('sms route', () => {
     expect(actionNotAvail!.message).toContain('isn\'t available right now')
     expect(actionNotAvail!.message).toContain(booking.ref)
   })
+
+  it('ARRIVED while OFFERED returns 200, keeps webhook_event, sends actionNotAvailable to driver', async () => {
+    const booking = await createBookingForSms()
+    const { offerNextDriver } = await import('../../src/modules/bookings/service.js')
+    
+    const offered = await offerNextDriver({ prisma, messenger: new FakeMessenger() }, { bookingId: booking.id })
+    const driver = offered.driver!
+    // Booking is now OFFERED
+
+    const messenger = new FakeMessenger()
+    app = buildApp({ prisma, messenger })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/webhooks/${SECRET}/sms`,
+      body: { id: 'msg-arrived-offered', from: driver.phone, text: `ARRIVED ${booking.ref}` },
+    })
+    
+    expect(res.statusCode).toBe(200)
+    
+    // webhook_event row should be kept (not deleted)
+    const webhookEvent = await prisma.webhookEvent.findUnique({ where: { id: 'msg-arrived-offered' } })
+    expect(webhookEvent).not.toBeNull()
+    
+    // Booking state should remain OFFERED
+    const bookingAfter = await prisma.booking.findUnique({ where: { ref: booking.ref } })
+    expect(bookingAfter?.state).toBe('OFFERED')
+    
+    // Should send actionNotAvailable to the driver
+    const actionNotAvail = messenger.sent.find((s) => s.to === driver.phone)
+    expect(actionNotAvail).toBeDefined()
+    expect(actionNotAvail!.message).toContain('isn\'t available right now')
+    expect(actionNotAvail!.message).toContain(booking.ref)
+  })
+
+  it('DONE before ARRIVED returns 200, keeps webhook_event, sends actionNotAvailable to driver', async () => {
+    const booking = await createBookingForSms()
+    const { offerNextDriver, acceptOffer } = await import('../../src/modules/bookings/service.js')
+    
+    const offered = await offerNextDriver({ prisma, messenger: new FakeMessenger() }, { bookingId: booking.id })
+    const driver = offered.driver!
+    await acceptOffer({ prisma, messenger: new FakeMessenger() }, { bookingId: booking.id, driverPhone: driver.phone })
+    // Booking is now CONFIRMED
+
+    const messenger = new FakeMessenger()
+    app = buildApp({ prisma, messenger })
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/webhooks/${SECRET}/sms`,
+      body: { id: 'msg-done-before-arrived', from: driver.phone, text: `DONE ${booking.ref}` },
+    })
+    
+    expect(res.statusCode).toBe(200)
+    
+    // webhook_event row should be kept
+    const webhookEvent = await prisma.webhookEvent.findUnique({ where: { id: 'msg-done-before-arrived' } })
+    expect(webhookEvent).not.toBeNull()
+    
+    // Booking state should remain CONFIRMED
+    const bookingAfter = await prisma.booking.findUnique({ where: { ref: booking.ref } })
+    expect(bookingAfter?.state).toBe('CONFIRMED')
+    
+    // Should send actionNotAvailable to the driver
+    const actionNotAvail = messenger.sent.find((s) => s.to === driver.phone)
+    expect(actionNotAvail).toBeDefined()
+    expect(actionNotAvail!.message).toContain('isn\'t available right now')
+    expect(actionNotAvail!.message).toContain(booking.ref)
+  })
+
+  it('duplicate accept (1 <ref> twice) returns 200, keeps webhook_event, sends actionNotAvailable to driver', async () => {
+    const booking = await createBookingForSms()
+    const { offerNextDriver, acceptOffer } = await import('../../src/modules/bookings/service.js')
+    
+    const offered = await offerNextDriver({ prisma, messenger: new FakeMessenger() }, { bookingId: booking.id })
+    const driver = offered.driver!
+    await acceptOffer({ prisma, messenger: new FakeMessenger() }, { bookingId: booking.id, driverPhone: driver.phone })
+    // Booking is now CONFIRMED, first accept succeeded
+
+    const messenger = new FakeMessenger()
+    app = buildApp({ prisma, messenger })
+
+    // Second accept with same message id would be deduped, so use different message id
+    const res = await app.inject({
+      method: 'POST',
+      url: `/webhooks/${SECRET}/sms`,
+      body: { id: 'msg-duplicate-accept', from: driver.phone, text: `1 ${booking.ref}` },
+    })
+    
+    expect(res.statusCode).toBe(200)
+    
+    // webhook_event row should be kept
+    const webhookEvent = await prisma.webhookEvent.findUnique({ where: { id: 'msg-duplicate-accept' } })
+    expect(webhookEvent).not.toBeNull()
+    
+    // Booking state should remain CONFIRMED
+    const bookingAfter = await prisma.booking.findUnique({ where: { ref: booking.ref } })
+    expect(bookingAfter?.state).toBe('CONFIRMED')
+    
+    // Should send actionNotAvailable to the driver (ConflictError path)
+    const actionNotAvail = messenger.sent.find((s) => s.to === driver.phone)
+    expect(actionNotAvail).toBeDefined()
+    expect(actionNotAvail!.message).toContain('isn\'t available right now')
+    expect(actionNotAvail!.message).toContain(booking.ref)
+  })
+
+  it('unknown sender gets no reply and no webhook_event deletion on illegal transition', async () => {
+    const booking = await createBookingForSms()
+    const { offerNextDriver, completeTrip, markArrived, acceptOffer } = await import('../../src/modules/bookings/service.js')
+    
+    // Complete the trip
+    const offered = await offerNextDriver({ prisma, messenger: new FakeMessenger() }, { bookingId: booking.id })
+    const driver = offered.driver!
+    await acceptOffer({ prisma, messenger: new FakeMessenger() }, { bookingId: booking.id, driverPhone: driver.phone })
+    await markArrived({ prisma, messenger: new FakeMessenger() }, { bookingId: booking.id, driverPhone: driver.phone })
+    await completeTrip({ prisma, messenger: new FakeMessenger() }, { bookingId: booking.id, driverPhone: driver.phone })
+
+    const messenger = new FakeMessenger()
+    app = buildApp({ prisma, messenger })
+
+    // Unknown sender tries DONE on completed trip
+    const res = await app.inject({
+      method: 'POST',
+      url: `/webhooks/${SECRET}/sms`,
+      body: { id: 'msg-unknown-sender', from: '+254799999999', text: `DONE ${booking.ref}` },
+    })
+    
+    expect(res.statusCode).toBe(200)
+    
+    // webhook_event row should be kept
+    const webhookEvent = await prisma.webhookEvent.findUnique({ where: { id: 'msg-unknown-sender' } })
+    expect(webhookEvent).not.toBeNull()
+    
+    // Should NOT send any SMS to unknown sender
+    expect(messenger.sent).toHaveLength(0)
+  })
+
+  it('unauthorized driver gets no reply on illegal transition', async () => {
+    const booking = await createBookingForSms()
+    const { offerNextDriver, completeTrip, markArrived, acceptOffer } = await import('../../src/modules/bookings/service.js')
+    
+    // Complete the trip
+    const offered = await offerNextDriver({ prisma, messenger: new FakeMessenger() }, { bookingId: booking.id })
+    const driver = offered.driver!
+    await acceptOffer({ prisma, messenger: new FakeMessenger() }, { bookingId: booking.id, driverPhone: driver.phone })
+    await markArrived({ prisma, messenger: new FakeMessenger() }, { bookingId: booking.id, driverPhone: driver.phone })
+    await completeTrip({ prisma, messenger: new FakeMessenger() }, { bookingId: booking.id, driverPhone: driver.phone })
+
+    const otherDriver = DRIVERS.find((d) => d.phone !== driver.phone)!
+    
+    const messenger = new FakeMessenger()
+    app = buildApp({ prisma, messenger })
+
+    // Other driver (unauthorized) tries DONE
+    const res = await app.inject({
+      method: 'POST',
+      url: `/webhooks/${SECRET}/sms`,
+      body: { id: 'msg-unauth-driver', from: otherDriver.phone, text: `DONE ${booking.ref}` },
+    })
+    
+    expect(res.statusCode).toBe(200)
+    
+    // webhook_event row should be kept
+    const webhookEvent = await prisma.webhookEvent.findUnique({ where: { id: 'msg-unauth-driver' } })
+    expect(webhookEvent).not.toBeNull()
+    
+    // Should NOT send any SMS to unauthorized driver
+    expect(messenger.sent).toHaveLength(0)
+  })
 })
