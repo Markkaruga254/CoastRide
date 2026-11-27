@@ -14,8 +14,14 @@ const DRIVERS = [
 ]
 
 async function seedDrivers() {
-  await prisma.driver.createMany({ data: DRIVERS, skipDuplicates: true })
-  return prisma.driver.findMany({ orderBy: { id: 'asc' } })
+  await prisma.driver.createMany({
+    data: DRIVERS.map((driver, index) => ({
+      ...driver,
+      createdAt: new Date(Date.UTC(2026, 10, 26, 0, 0, index)),
+    })),
+    skipDuplicates: true,
+  })
+  return prisma.driver.findMany({ orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] })
 }
 
 async function decline(driverId: string, bookingId: string) {
@@ -23,11 +29,14 @@ async function decline(driverId: string, bookingId: string) {
 }
 
 beforeEach(async () => {
-  await prisma.driver.createMany({ data: DRIVERS, skipDuplicates: true })
+  await prisma.bookingDecline.deleteMany()
+  await prisma.booking.deleteMany()
+  await prisma.driver.deleteMany()
+  await seedDrivers()
 })
 
 describe('driver selection', () => {
-  it('picks the active driver with the lowest id', async () => {
+  it('picks the oldest active driver', async () => {
     const drivers = await seedDrivers()
     const booking = await prisma.booking.create({
       data: {
@@ -97,6 +106,36 @@ describe('driver selection', () => {
 
     const selected = await selectNextDriver(prisma, booking.id)
     expect(selected?.id).toBe(drivers[2].id)
+  })
+
+
+  it('skips drivers assigned to another active trip', async () => {
+    const drivers = await seedDrivers()
+    await prisma.booking.create({
+      data: {
+        ref: 'CR0098',
+        passengerPhone: '+254700000010',
+        pickupPoint: 'MIA',
+        pickupAt: new Date('2026-11-24T14:30:00Z'),
+        destination: 'Nyali',
+        partySize: 2,
+        state: 'CONFIRMED',
+        driverId: drivers[0].id,
+      },
+    })
+    const newBooking = await prisma.booking.create({
+      data: {
+        ref: 'CR0099',
+        passengerPhone: '+254700000011',
+        pickupPoint: 'SGR',
+        pickupAt: new Date('2026-11-24T15:00:00Z'),
+        destination: 'Bamburi',
+        partySize: 1,
+      },
+    })
+
+    const selected = await selectNextDriver(prisma, newBooking.id)
+    expect(selected?.id).toBe(drivers[1].id)
   })
 
   it('returns null when no drivers are left', async () => {

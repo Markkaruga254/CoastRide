@@ -2,7 +2,6 @@ name: Backend CI
 
 on:
   pull_request:
-    branches: [main]
   push:
     branches: [main]
 
@@ -34,11 +33,14 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Configure test environment
         run: |
@@ -52,6 +54,7 @@ jobs:
           AT_ENABLED=false
           AT_USERNAME=
           AT_API_KEY=
+          CRON_SECRET=ci-only-cron-secret-0123456789abcdef
           LOG_LEVEL=error
           EOF
 
@@ -69,3 +72,28 @@ jobs:
 
       - name: Test
         run: npm test
+
+      - name: Docker Compose startup smoke test
+        run: |
+          export DB_HOST_PORT=55432
+          export WEBHOOK_SECRET=ci-only-webhook-secret-0123456789abcdef
+          export CRON_SECRET=ci-only-cron-secret-0123456789abcdef
+          trap 'docker compose down -v' EXIT
+          docker compose up --build -d db app
+          ready=0
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail http://127.0.0.1:3000/health; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" -ne 1 ]; then
+            docker compose ps -a
+            APP_ID=$(docker compose ps -aq app)
+            if [ -n "$APP_ID" ]; then
+              docker inspect "$APP_ID" --format 'app exit={{.State.ExitCode}} error={{.State.Error}} path={{.Path}} args={{json .Args}}'
+            fi
+            docker compose logs --no-color app db
+            exit 1
+          fi

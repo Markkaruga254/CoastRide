@@ -7,6 +7,7 @@ export interface UssdDeps {
   prisma: PrismaClient
   messenger: MessagingPort
   now: () => Date
+  awaitNotifications?: boolean
 }
 
 export interface UssdInput {
@@ -338,8 +339,11 @@ export async function handleUssd(
   })
 
   if (existingBooking) {
+    if (existingBooking.passengerPhone !== phone) {
+      return { type: 'END', text: 'END Booking not found.' }
+    }
     if (existingBooking.state === 'REQUESTED') {
-      return { type: 'END', text: `END Booked! Ref ${existingBooking.ref}. We sent you an SMS.` }
+      return { type: 'END', text: `END Booked! Ref ${existingBooking.ref}. SMS confirmation will follow.` }
     }
     const stateLabel = getStateLabel(existingBooking.state)
     let text = `END Booking ${existingBooking.ref}: ${stateLabel}`
@@ -374,16 +378,10 @@ export async function handleUssd(
       pickupAt: pickupAt.toISOString(),
       destination,
       partySize,
-    })
+      ussdSessionId: sessionId,
+    }, { awaitNotifications: deps.awaitNotifications })
 
-    await prisma.booking.update({
-      where: { id: booking.id },
-      data: { ussdSessionId: sessionId },
-    }).catch(() => {
-      // Ignore unique constraint error - another request may have set it
-    })
-
-    return { type: 'END', text: `END Booked! Ref ${booking.ref}. We sent you an SMS.` }
+    return { type: 'END', text: `END Booked! Ref ${booking.ref}. SMS confirmation will follow.` }
   }
 
   // No terminal action: render the screen for the current step
@@ -456,8 +454,8 @@ export async function handleUssd(
         where: { ref },
         include: { driver: true },
       })
-      if (!booking) {
-        return { type: 'END', text: `END Booking ${ref} not found.` }
+      if (!booking || booking.passengerPhone !== phone) {
+        return { type: 'END', text: 'END Booking not found.' }
       }
       const stateLabel = getStateLabel(booking.state)
       let resultText = `END Booking ${ref}: ${stateLabel}`

@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { FastifyInstance } from 'fastify'
 import { PrismaClient } from '@prisma/client'
 import { buildApp } from '../../src/http/server.js'
+import { resetRateLimits } from '../../src/lib/rateLimit.js'
 import { FakeMessenger } from '../../src/modules/messaging/fake.js'
 
 const prisma = new PrismaClient({
@@ -11,6 +12,7 @@ const messenger = new FakeMessenger()
 let app: FastifyInstance
 
 beforeEach(async () => {
+  resetRateLimits()
   app = buildApp({ prisma, messenger })
 })
 
@@ -44,6 +46,32 @@ describe('webhook routes', () => {
       body: { phoneNumber: '+254700000001', from: '+254700000002' },
     })
     expect(res.statusCode).toBe(200)
+  })
+
+
+  it('releases the SMS deduplication key and returns 500 when processing fails', async () => {
+    const fakePrisma = {
+      webhookEvent: {
+        create: vi.fn().mockResolvedValue({ id: 'retry-after-failure' }),
+        delete: vi.fn().mockResolvedValue({ id: 'retry-after-failure' }),
+      },
+      booking: {
+        findUnique: vi.fn().mockRejectedValue(new Error('temporary database failure')),
+      },
+    } as unknown as PrismaClient
+    const failingApp = buildApp({ prisma: fakePrisma, messenger })
+
+    const response = await failingApp.inject({
+      method: 'POST',
+      url: `/webhooks/${SECRET}/sms`,
+      body: { id: 'retry-after-failure', from: '+254700000010', text: '1 CR1234' },
+    })
+
+    expect(response.statusCode).toBe(500)
+    expect(fakePrisma.webhookEvent.delete).toHaveBeenCalledWith({
+      where: { id: 'retry-after-failure' },
+    })
+    await failingApp.close()
   })
 
   it('rate limits echo endpoint', async () => {
@@ -89,6 +117,21 @@ describe('ussd route', () => {
     expect(res.body).toContain('END Service temporarily unavailable')
   })
 
+
+  it('rate limits the actual USSD callback endpoint', async () => {
+    let lastStatus = 0
+    for (let i = 0; i < 61; i++) {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/webhooks/${SECRET}/ussd`,
+        body: { sessionId: `rate-limit-${i}`, phoneNumber: '+254700000010', text: '' },
+      })
+      lastStatus = response.statusCode
+      if (i < 60) expect(response.statusCode).toBe(200)
+    }
+    expect(lastStatus).toBe(429)
+  })
+
   it('offers booking to first driver after USSD booking', async () => {
     for (const d of [
       { name: 'Alice Wanjiku', phone: '+254700000001', plate: 'KBA 123A', vehicle: 'Toyota Noah' },
@@ -109,7 +152,11 @@ describe('ussd route', () => {
     expect(refMatch).toBeTruthy()
     const ref = refMatch![0]
 
-    const booking = await prisma.booking.findUnique({ where: { ref } })
+    let booking = await prisma.booking.findUnique({ where: { ref } })
+    for (let attempt = 0; attempt < 100 && booking?.state !== 'OFFERED'; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      booking = await prisma.booking.findUnique({ where: { ref } })
+    }
     expect(booking).not.toBeNull()
     expect(booking!.state).toBe('OFFERED')
     expect(booking!.driverId).not.toBeNull()

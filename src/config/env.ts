@@ -6,15 +6,19 @@ export const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   DATABASE_URL: z.string().url(),
   TEST_DATABASE_URL: z.string().url().optional(),
-  PORT: z.string().regex(/^\d+$/).transform(Number).default('3000'),
+  PORT: z.string().regex(/^\d+$/).transform(Number).default(3000),
   HOST: z.string().default('0.0.0.0'),
   WEBHOOK_SECRET: z.string().min(24).refine(
     (val) => !forbiddenSecretPatterns.some((p) => val.includes(p)),
     'WEBHOOK_SECRET must not contain placeholder values like "change-me" or "REPLACE_ME"',
   ),
-  AT_ENABLED: z.string().transform((v) => v === 'true').default('false'),
+  AT_ENABLED: z.string().transform((v) => v === 'true').default(false),
   AT_USERNAME: z.string().optional(),
   AT_API_KEY: z.string().optional(),
+  CRON_SECRET: z.preprocess(
+    (value) => value === '' ? undefined : value,
+    z.string().min(24).optional(),
+  ),
   SEED_DRIVER_PHONES: z.string().default(
     '+254700000001,+254700000002,+254700000003,+254700000004',
   ),
