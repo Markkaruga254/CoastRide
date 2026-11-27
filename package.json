@@ -12,7 +12,8 @@
     "test": "node --env-file=.env ./node_modules/.bin/vitest run --passWithNoTests",
     "db:migrate": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
-    "smoke:sms": "tsx scripts/smoke-sms.ts"
+    "smoke:sms": "tsx scripts/smoke-sms.ts",
+    "demo:reset": "tsx scripts/demo-reset.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.16.0",
