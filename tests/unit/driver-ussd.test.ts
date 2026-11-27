@@ -8,9 +8,9 @@ const prisma = new PrismaClient({ datasourceUrl: process.env.TEST_DATABASE_URL }
 const messenger = new FakeMessenger()
 const deps = { prisma, messenger }
 
-async function createDriver(name: string, phone: string) {
+async function createDriver(name: string, phone: string, createdAt = new Date()) {
   return prisma.driver.create({
-    data: { name, phone, plate: 'KCA 123A', vehicle: 'Toyota Noah' },
+    data: { name, phone, plate: 'KCA 123A', vehicle: 'Toyota Noah', createdAt },
   })
 }
 
@@ -78,8 +78,8 @@ describe('driver USSD flow', () => {
   })
 
   it('declines an offer and sends it to the next available driver', async () => {
-    await createDriver('First Driver', '+254100314202')
-    await createDriver('Second Driver', '+254100314203')
+    await createDriver('First Driver', '+254100314202', new Date('2026-01-01T00:00:00.000Z'))
+    await createDriver('Second Driver', '+254100314203', new Date('2026-01-02T00:00:00.000Z'))
     const booking = await createOfferedBooking()
 
     const declined = await handleDriverUssd({ phoneNumber: '+254100314202', text: '1*2' }, deps)
