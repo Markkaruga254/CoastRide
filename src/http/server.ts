@@ -90,7 +90,7 @@ export function buildApp(
   })
 
   app.setErrorHandler(errorHandler as (error: FastifyError, request: FastifyRequest, reply: FastifyReply) => void)
-  app.register(healthRoutes)
+  app.register(healthRoutes, deps)
   app.register(webhooksRoutes)
   app.register(ussdRoutes, { prefix: '/webhooks/:secret', ...deps })
   app.register(smsRoutes, { prefix: '/webhooks/:secret', ...deps })

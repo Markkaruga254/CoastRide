@@ -9,6 +9,7 @@ import {
   arrived,
   completed,
   helpText,
+  actionNotAvailable,
 } from '../../src/modules/messaging/templates.js'
 
 const TIME_ZONE = 'Africa/Nairobi'
@@ -66,10 +67,14 @@ describe('SMS templates', () => {
     expect(completed('CR1042')).toBe('CoastRide trip CR1042 completed. Thank you!')
   })
 
-  it('helpText', () => {
+  it('helpText matches parser syntax', () => {
     expect(helpText()).toBe(
-      'CoastRide: reply 1 accept / 2 decline / ARRIVED / DONE / CANCEL / DELAY <min>.',
+      'CoastRide: 1 <ref> accept, 2 <ref> decline, DELAY <min> <ref>, ARRIVED <ref>, DONE <ref>'
     )
+  })
+
+  it('actionNotAvailable', () => {
+    expect(actionNotAvailable('CR1042')).toBe("CoastRide CR1042: that action isn't available right now.")
   })
 
   it('every template is under 160 chars', () => {
@@ -91,6 +96,7 @@ describe('SMS templates', () => {
       ['arrived', arrived('CR1042', 'Alice Wanjiku')],
       ['completed', completed('CR1042')],
       ['helpText', helpText()],
+      ['actionNotAvailable', actionNotAvailable('CR1042')],
     ]
     for (const [name, text] of cases) {
       expect(text.length, `${name} length`).toBeLessThan(160)

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { PrismaClient } from '@prisma/client'
 import { FakeMessenger } from '../../src/modules/messaging/fake.js'
 import {
@@ -315,5 +315,143 @@ describe('trip lifecycle acceptance (1-5, 7)', () => {
     })
     expect(message).not.toBeNull()
     expect(message!.status).toBe('failed')
+  })
+})
+
+describe('configurable offer timeout', () => {
+  let shortTimeoutAcceptOffer: typeof acceptOffer
+  let shortTimeoutExpirePendingOffers: typeof expirePendingOffers
+  let shortTimeoutOfferNextDriver: typeof offerNextDriver
+  let shortTimeoutCreateBooking: typeof createBooking
+
+  beforeAll(async () => {
+    // Set short timeout before importing the module
+    process.env.OFFER_TIMEOUT_SECONDS = '10'
+    // Clear env cache to force re-parse with new env
+    const { resetEnvForTesting } = await import('../../src/config/env.js')
+    resetEnvForTesting()
+    // Re-import the service module to pick up new env
+    const mod = await import('../../src/modules/bookings/service.js')
+    shortTimeoutAcceptOffer = mod.acceptOffer
+    shortTimeoutExpirePendingOffers = mod.expirePendingOffers
+    shortTimeoutOfferNextDriver = mod.offerNextDriver
+    shortTimeoutCreateBooking = mod.createBooking
+  })
+
+  beforeEach(async () => {
+    await prisma.$executeRawUnsafe(
+      `TRUNCATE TABLE "Message", "TripEvent", "BookingDecline", "Booking", "Driver", "WebhookEvent" RESTART IDENTITY CASCADE`
+    )
+    // Re-seed drivers
+    for (const d of DRIVERS) {
+      await prisma.driver.upsert({ where: { phone: d.phone }, update: {}, create: d })
+    }
+  })
+
+  afterAll(async () => {
+    // Restore default for other tests
+    process.env.OFFER_TIMEOUT_SECONDS = '180'
+    const { resetEnvForTesting } = await import('../../src/config/env.js')
+    resetEnvForTesting()
+  })
+
+  it('rejects acceptOffer after short timeout', async () => {
+    const messenger = new FakeMessenger()
+    const deps = { prisma, messenger }
+
+    // Seed drivers right before createBooking (like trip lifecycle tests do)
+    for (const d of DRIVERS) {
+      await prisma.driver.upsert({ where: { phone: d.phone }, update: {}, create: d })
+    }
+    const driverCountBeforeCreate = await prisma.driver.count()
+    console.log('[DEBUG] Driver count before createBooking:', driverCountBeforeCreate)
+    
+    // Use original createBooking to avoid any re-import issues
+    const { createBooking: originalCreateBooking } = await import('../../src/modules/bookings/service.js')
+    const booking = await originalCreateBooking(deps, BOOKING_INPUT)
+    
+    // Debug: check drivers after createBooking
+    const driverCountAfterCreate = await prisma.driver.count()
+    const activeDriversAfterCreate = await prisma.driver.findMany({ where: { active: true } })
+    console.log('[DEBUG] Driver count after createBooking:', driverCountAfterCreate, 'Active:', activeDriversAfterCreate.map(d => d.id))
+    
+    // Debug: check what drivers are available for offerNextDriver
+    const bookingCount = await prisma.booking.count()
+    console.log('[DEBUG] Booking count:', bookingCount)
+    const allBookings = await prisma.booking.findMany()
+    console.log('[DEBUG] All bookings:', allBookings.map(b => ({ id: b.id, state: b.state, driverId: b.driverId })))
+    
+    // Check drivers with their bookings
+    const driversWithBookings = await prisma.driver.findMany({
+      include: { Booking: true },
+    })
+    console.log('[DEBUG] Drivers with bookings:', driversWithBookings.map(d => ({ id: d.id, bookings: d.Booking.length })))
+    
+    // Test various queries
+    const allActiveDrivers = await prisma.driver.findMany({ where: { active: true } })
+    console.log('[DEBUG] All active drivers:', allActiveDrivers.map(d => d.id))
+    
+    const driversWithSomeBooking = await prisma.driver.findMany({
+      where: {
+        active: true,
+        Booking: {
+          some: { state: { in: ['OFFERED', 'CONFIRMED', 'ARRIVED'] } },
+        },
+      },
+    })
+    console.log('[DEBUG] Drivers WITH some booking in excluded states:', driversWithSomeBooking.map(d => d.id))
+    
+    const driversWithNoneBooking = await prisma.driver.findMany({
+      where: {
+        active: true,
+        Booking: {
+          none: { state: { in: ['OFFERED', 'CONFIRMED', 'ARRIVED'] } },
+        },
+      },
+    })
+    console.log('[DEBUG] Drivers WITH NONE booking in excluded states:', driversWithNoneBooking.map(d => d.id))
+    
+    const availableDrivers = await prisma.driver.findMany({
+      where: {
+        active: true,
+        Booking: {
+          none: { state: { in: ['OFFERED', 'CONFIRMED', 'ARRIVED'] } },
+        },
+      },
+    })
+    console.log('[DEBUG] Available drivers for offer:', availableDrivers.map(d => d.id))
+    
+    const offer = await shortTimeoutOfferNextDriver(deps, { bookingId: booking.id })
+    console.log('[DEBUG] Offer result:', { bookingId: offer.booking.id, state: offer.booking.state, driver: offer.driver?.id })
+    // Manually set updatedAt to 15 seconds ago (past the 10s timeout)
+    await prisma.booking.update({
+      where: { id: booking.id },
+      data: { updatedAt: new Date(Date.now() - 15_000) },
+    })
+
+    await expect(
+      shortTimeoutAcceptOffer(deps, { bookingId: booking.id, driverPhone: offer.driver!.phone }),
+    ).rejects.toBeInstanceOf(ConflictError)
+  })
+
+  it('expires offer with expirePendingOffers after short timeout', async () => {
+    const messenger = new FakeMessenger()
+    const deps = { prisma, messenger }
+
+    const booking = await shortTimeoutCreateBooking(deps, BOOKING_INPUT)
+    const firstOffer = await shortTimeoutOfferNextDriver(deps, { bookingId: booking.id })
+    const firstDriver = firstOffer.driver!
+
+    // Call expirePendingOffers with a time 15 seconds in the future (past the 10s timeout)
+    const expired = await shortTimeoutExpirePendingOffers(deps, new Date(Date.now() + 15_000))
+    expect(expired).toBe(1)
+
+    const updated = await prisma.booking.findUnique({ where: { id: booking.id } })
+    expect(updated?.state).toBe('OFFERED')
+    expect(updated?.driverId).not.toBe(firstDriver.id)
+    const timeout = await prisma.bookingDecline.findUnique({
+      where: { bookingId_driverId: { bookingId: booking.id, driverId: firstDriver.id } },
+    })
+    expect(timeout?.reason).toBe('timeout')
   })
 })

@@ -7,6 +7,24 @@ Airport and SGR transfer coordination backend.
 - Node.js 22 or newer for local development.
 - Docker Engine and Docker Compose for the containerized setup.
 
+## Configuration
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `NODE_ENV` | No | `development` | Runtime environment |
+| `DATABASE_URL` | Yes | — | PostgreSQL connection string |
+| `TEST_DATABASE_URL` | No | — | Test database (name must end in `_test`) |
+| `PORT` | No | `3000` | HTTP port |
+| `HOST` | No | `0.0.0.0` | Bind address |
+| `WEBHOOK_SECRET` | Yes | — | High-entropy secret for webhook endpoints (min 24 chars, no placeholders) |
+| `AT_ENABLED` | No | `false` | Enable Africa's Talking adapter |
+| `AT_USERNAME` | When `AT_ENABLED=true` | — | Africa's Talking username |
+| `AT_API_KEY` | When `AT_ENABLED=true` | — | Africa's Talking API key |
+| `CRON_SECRET` | No | — | Secret for `/internal/jobs/process` (min 24 chars) |
+| `OFFER_TIMEOUT_SECONDS` | No | `180` | Driver offer expiry in seconds (min 10) |
+| `LOG_LEVEL` | No | `info` | Pino log level |
+| `SEED_DRIVER_PHONES` | No | 4 sandbox numbers | Comma-separated driver phones for seeding |
+
 ## Run locally with Docker Compose
 
 1. Copy the example environment file:

@@ -13,8 +13,9 @@ import {
   cancelBooking,
   offerNextDriver,
   ConflictError,
+  IllegalTransitionError,
 } from '../bookings/service.js'
-import { helpText } from '../messaging/templates.js'
+import { helpText, actionNotAvailable } from '../messaging/templates.js'
 
 const log = pino({ level: process.env.LOG_LEVEL ?? 'info' })
 
@@ -112,6 +113,26 @@ export async function handleInboundSms(
     if (error instanceof ConflictError) {
       // Stale/duplicate commands are terminal business outcomes, not provider failures.
       log.warn({ command: command.kind, bookingId: booking.id, messageId }, 'inbound SMS command conflict')
+      if (isAssignedDriver || isPassenger) {
+        try {
+          await messenger.sendSms({ to: phone, message: actionNotAvailable(booking.ref) })
+        } catch (sendError) {
+          log.warn({ err: sendError, phone: maskPhone(phone), messageId }, 'failed to send actionNotAvailable SMS')
+        }
+      }
+      return
+    }
+    if (error instanceof IllegalTransitionError) {
+      // Invalid state transitions are terminal business outcomes, not provider failures.
+      // Notify the sender if they are the assigned driver or passenger.
+      log.warn({ command: command.kind, bookingId: booking.id, messageId }, 'inbound SMS illegal transition')
+      if (isAssignedDriver || isPassenger) {
+        try {
+          await messenger.sendSms({ to: phone, message: actionNotAvailable(booking.ref) })
+        } catch (sendError) {
+          log.warn({ err: sendError, phone: maskPhone(phone), messageId }, 'failed to send actionNotAvailable SMS')
+        }
+      }
       return
     }
     log.error({ err: error, command: command.kind, bookingId: booking.id, messageId }, 'inbound SMS processing failed')

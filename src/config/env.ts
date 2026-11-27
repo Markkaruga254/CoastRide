@@ -19,6 +19,12 @@ export const envSchema = z.object({
     (value) => value === '' ? undefined : value,
     z.string().min(24).optional(),
   ),
+  OFFER_TIMEOUT_SECONDS: z
+    .string()
+    .regex(/^\d+$/)
+    .transform(Number)
+    .pipe(z.number().int().min(10))
+    .default(180),
   SEED_DRIVER_PHONES: z.string().default(
     '+254700000001,+254700000002,+254700000003,+254700000004',
   ),
@@ -44,4 +50,8 @@ export function getEnv(): Env {
     _env = envSchema.parse(process.env);
   }
   return _env;
+}
+
+export function resetEnvForTesting(): void {
+  _env = null;
 }

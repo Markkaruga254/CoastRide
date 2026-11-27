@@ -70,13 +70,21 @@ describe('end-to-end scenario', () => {
     expect(offeredDriver).not.toBeNull()
     const offeredDriverPhone = offeredDriver!.phone
 
+    // Wait for both SMS messages to be dispatched (fire-and-forget may not have completed yet)
+    let offerSms1
+    let confirmationSms
+    for (let i = 0; i < 50; i++) {
+      offerSms1 = messenger.sent.find((s) => s.to === offeredDriverPhone)
+      confirmationSms = messenger.sent.find((s) => s.to === '+254700000010')
+      if (offerSms1 && confirmationSms) break
+      await new Promise((r) => setTimeout(r, 50))
+    }
+
     // Confirmation SMS sent to passenger
-    const confirmationSms = messenger.sent.find((s) => s.to === '+254700000010')
     expect(confirmationSms).toBeDefined()
     expect(confirmationSms!.message).toContain(ref)
 
     // Offer SMS sent to the offered driver
-    const offerSms1 = messenger.sent.find((s) => s.to === offeredDriverPhone)
     expect(offerSms1).toBeDefined()
     expect(offerSms1!.message).toContain(ref)
     expect(offerSms1!.message).toContain('Reply 1 accept / 2 decline')

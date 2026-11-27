@@ -14,6 +14,7 @@ import {
   completed,
   noDriverAvailable,
 } from '../messaging/templates.js'
+import { getEnv } from '../../config/env.js'
 
 export interface TripServiceDeps {
   prisma: PrismaClient
@@ -48,7 +49,10 @@ const log = pino({ level: 'error' })
 
 const MAX_MESSAGE_ATTEMPTS = 5
 const MESSAGE_LEASE_MS = 2 * 60_000
-const OFFER_TIMEOUT_MS = 3 * 60_000
+
+function getOfferTimeoutMs(): number {
+  return getEnv().OFFER_TIMEOUT_SECONDS * 1000
+}
 
 type StoredMessage = NonNullable<Awaited<ReturnType<PrismaClient['message']['findUnique']>>>
 
@@ -153,7 +157,7 @@ export async function expirePendingOffers(
   deps: TripServiceDeps,
   now = new Date(),
 ): Promise<number> {
-  const cutoff = new Date(now.getTime() - OFFER_TIMEOUT_MS)
+  const cutoff = new Date(now.getTime() - getOfferTimeoutMs())
   const candidates = await deps.prisma.booking.findMany({
     where: { state: 'OFFERED', updatedAt: { lte: cutoff } },
     select: { id: true },
@@ -431,7 +435,7 @@ export async function acceptOffer(
   const result = await prisma.$transaction(async (tx) => {
     const booking = await tx.booking.findUnique({ where: { id: bookingId } })
     if (!booking) throw new Error(`Booking ${bookingId} not found`)
-    const offerCutoff = new Date(Date.now() - OFFER_TIMEOUT_MS)
+    const offerCutoff = new Date(Date.now() - getOfferTimeoutMs())
     if (
       booking.state !== 'OFFERED' ||
       booking.driverId !== driver.id ||
