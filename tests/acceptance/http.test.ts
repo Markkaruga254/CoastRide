@@ -153,11 +153,9 @@ describe('temporary REST API', () => {
       destination: 'Westlands',
       partySize: 2,
     })
-    const drivers = await prisma.driver.findMany({ orderBy: { id: 'asc' } })
-    const driver = drivers[0]
-
-    // Advance to COMPLETED via service
-    await offerNextDriver({ prisma, messenger }, { bookingId: booking.id })
+    // Advance to COMPLETED via the driver actually selected by dispatch.
+    const offer = await offerNextDriver({ prisma, messenger }, { bookingId: booking.id })
+    const driver = offer.driver!
     await acceptOffer({ prisma, messenger }, { bookingId: booking.id, driverPhone: driver.phone })
     await markArrived({ prisma, messenger }, { bookingId: booking.id, driverPhone: driver.phone })
     await completeTrip({ prisma, messenger }, { bookingId: booking.id, driverPhone: driver.phone })
@@ -185,10 +183,8 @@ describe('temporary REST API', () => {
       destination: 'Westlands',
       partySize: 2,
     })
-    const drivers = await prisma.driver.findMany({ orderBy: { id: 'asc' } })
-    const driver = drivers[0]
-
-    await offerNextDriver({ prisma, messenger }, { bookingId: booking.id })
+    const offer = await offerNextDriver({ prisma, messenger }, { bookingId: booking.id })
+    const driver = offer.driver!
     await acceptOffer({ prisma, messenger }, { bookingId: booking.id, driverPhone: driver.phone })
 
     const before = await prisma.booking.findUnique({ where: { id: booking.id } })

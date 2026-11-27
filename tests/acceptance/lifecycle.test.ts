@@ -7,6 +7,8 @@ import {
   acceptOffer,
   declineOffer,
   applyDelay,
+  dispatchPendingMessages,
+  expirePendingOffers,
   ConflictError,
 } from '../../src/modules/bookings/service.js'
 
@@ -128,6 +130,11 @@ describe('trip lifecycle acceptance (1-5, 7)', () => {
     const final = await prisma.booking.findUnique({ where: { id: booking.id } })
     expect(final?.state).toBe('NO_DRIVER')
     expect(final?.driverId).toBeNull()
+    const noDriverNotice = await prisma.message.findFirst({
+      where: { bookingId: booking.id, phone: BOOKING_INPUT.passengerPhone },
+      orderBy: { createdAt: 'desc' },
+    })
+    expect(noDriverNotice?.body).toContain('no driver is available')
   })
 
   it('acceptance 5: delay 90 min in CONFIRMED keeps state, updates pickup_at, messages both', async () => {
@@ -172,6 +179,119 @@ describe('trip lifecycle acceptance (1-5, 7)', () => {
 
     const back = await prisma.booking.findUnique({ where: { id: booking.id } })
     expect(back?.state).toBe('OFFERED')
+  })
+
+
+  it('serializes concurrent offers so a driver cannot be assigned to two active trips', async () => {
+    const messenger = new FakeMessenger()
+    const deps = { prisma, messenger }
+    await seedDrivers()
+
+    const [bookingA, bookingB] = await Promise.all([
+      createBooking(deps, BOOKING_INPUT),
+      createBooking(deps, { ...BOOKING_INPUT, passengerPhone: '+254700000011' }),
+    ])
+
+    const [offerA, offerB] = await Promise.all([
+      offerNextDriver(deps, { bookingId: bookingA.id }),
+      offerNextDriver(deps, { bookingId: bookingB.id }),
+    ])
+
+    expect(offerA.driver).not.toBeNull()
+    expect(offerB.driver).not.toBeNull()
+    expect(offerA.driver!.id).not.toBe(offerB.driver!.id)
+  })
+
+  it('makes concurrent offer attempts for one booking idempotent', async () => {
+    const messenger = new FakeMessenger()
+    const deps = { prisma, messenger }
+    await seedDrivers()
+
+    const booking = await createBooking(deps, BOOKING_INPUT)
+    const [first, second] = await Promise.all([
+      offerNextDriver(deps, { bookingId: booking.id }),
+      offerNextDriver(deps, { bookingId: booking.id }),
+    ])
+
+    expect(first.driver?.id).toBe(second.driver?.id)
+    const persisted = await prisma.booking.findUnique({ where: { id: booking.id } })
+    expect(persisted?.state).toBe('OFFERED')
+    expect(persisted?.driverId).toBe(first.driver?.id)
+    const offerMessages = messenger.sent.filter(
+      (message) => message.to === first.driver!.phone,
+    )
+    expect(offerMessages).toHaveLength(1)
+  })
+
+
+
+  it('rejects a driver accepting an offer after its three-minute deadline', async () => {
+    const messenger = new FakeMessenger()
+    const deps = { prisma, messenger }
+    await seedDrivers()
+
+    const booking = await createBooking(deps, BOOKING_INPUT)
+    const offer = await offerNextDriver(deps, { bookingId: booking.id })
+    await prisma.booking.update({
+      where: { id: booking.id },
+      data: { updatedAt: new Date(Date.now() - 4 * 60_000) },
+    })
+
+    await expect(
+      acceptOffer(deps, { bookingId: booking.id, driverPhone: offer.driver!.phone }),
+    ).rejects.toBeInstanceOf(ConflictError)
+  })
+
+  it('expires an unanswered offer and tries the next driver', async () => {
+    const messenger = new FakeMessenger()
+    const deps = { prisma, messenger }
+    await seedDrivers()
+
+    const booking = await createBooking(deps, BOOKING_INPUT)
+    const firstOffer = await offerNextDriver(deps, { bookingId: booking.id })
+    const firstDriver = firstOffer.driver!
+
+    const expired = await expirePendingOffers(deps, new Date(Date.now() + 4 * 60_000))
+    expect(expired).toBe(1)
+
+    const updated = await prisma.booking.findUnique({ where: { id: booking.id } })
+    expect(updated?.state).toBe('OFFERED')
+    expect(updated?.driverId).not.toBe(firstDriver.id)
+    const timeout = await prisma.bookingDecline.findUnique({
+      where: { bookingId_driverId: { bookingId: booking.id, driverId: firstDriver.id } },
+    })
+    expect(timeout?.reason).toBe('timeout')
+    const timeoutEvent = await prisma.tripEvent.findFirst({
+      where: { bookingId: booking.id, type: 'OFFER_TIMEOUT' },
+    })
+    expect(timeoutEvent).not.toBeNull()
+  })
+
+  it('retries failed outbox messages with backoff metadata', async () => {
+    const failingMessenger = {
+      sendSms: async () => {
+        throw new Error('temporary SMS outage')
+      },
+    }
+    await createBooking({ prisma, messenger: failingMessenger }, BOOKING_INPUT)
+
+    const failed = await prisma.message.findFirst({ orderBy: { createdAt: 'desc' } })
+    expect(failed?.status).toBe('failed')
+    expect(failed?.attempts).toBe(1)
+    expect(failed?.nextAttemptAt).not.toBeNull()
+
+    const retryMessenger = new FakeMessenger()
+    const processed = await dispatchPendingMessages(
+      { prisma, messenger: retryMessenger },
+      { now: new Date(Date.now() + 60 * 60_000) },
+    )
+    expect(processed).toBe(1)
+
+    const retried = await prisma.message.findUnique({ where: { id: failed!.id } })
+    expect(retried?.status).toBe('sent')
+    expect(retried?.attempts).toBe(2)
+    expect(retried?.nextAttemptAt).toBeNull()
+    expect(retryMessenger.sent).toHaveLength(1)
   })
 
   it('messenger throws: booking still succeeds, message row marked failed', async () => {

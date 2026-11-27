@@ -80,12 +80,17 @@ model Message {
   phone      String
   body       String
   providerId String?
-  status     String   @default("queued")
-  createdAt  DateTime @default(now())
+  status         String    @default("queued")
+  attempts       Int       @default(0)
+  nextAttemptAt  DateTime?
+  lastError      String?
+  lockedAt       DateTime?
+  createdAt      DateTime  @default(now())
 
   booking Booking? @relation(fields: [bookingId], references: [id], onDelete: Cascade)
 
   @@index([bookingId])
+  @@index([status, nextAttemptAt])
 }
 
 model WebhookEvent {

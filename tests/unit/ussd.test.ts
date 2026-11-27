@@ -207,6 +207,36 @@ describe('handleUssd', () => {
       expect(res.text).toContain('Invalid ref')
     })
 
+
+    it('does not reveal a booking through another passenger phone or session id', async () => {
+      const ownerPhone = '+254700000001'
+      const otherPhone = '+254700000002'
+      const sessionId = 'sess-private-owner'
+      await handleUssd({
+        phoneNumber: ownerPhone,
+        text: '1*KQ100*1430*Mombasa*2*1',
+        sessionId,
+      }, deps)
+      const booking = await prisma.booking.findUnique({ where: { ussdSessionId: sessionId } })
+      expect(booking).not.toBeNull()
+
+      const sessionLookup = await handleUssd({
+        phoneNumber: otherPhone,
+        text: '',
+        sessionId,
+      }, deps)
+      expect(sessionLookup.text).toBe('END Booking not found.')
+      expect(sessionLookup.text).not.toContain(booking!.ref)
+
+      const referenceLookup = await handleUssd({
+        phoneNumber: otherPhone,
+        text: `3*${booking!.ref}`,
+        sessionId: 'sess-other-passenger',
+      }, deps)
+      expect(referenceLookup.text).toBe('END Booking not found.')
+      expect(referenceLookup.text).not.toContain(booking!.ref)
+    })
+
     it('returns not found for unknown ref', async () => {
       const res = await handleUssd({ phoneNumber: '+254700000001', text: '3*CR9999', sessionId: 'sess-42' }, deps)
       expect(res.type).toBe('END')
@@ -232,6 +262,52 @@ describe('handleUssd', () => {
   })
 
   describe('Idempotency', () => {
+
+    it('creates only one booking for concurrent final confirmations in one USSD session', async () => {
+      const input = {
+        phoneNumber: '+254700000001',
+        text: '1*KQ100*1430*Mombasa*2*1',
+        sessionId: 'sess-concurrent-confirm',
+      }
+
+      const [first, second] = await Promise.all([
+        handleUssd(input, deps),
+        handleUssd(input, deps),
+      ])
+
+      expect(first.type).toBe('END')
+      expect(second.text).toBe(first.text)
+      const bookings = await prisma.booking.findMany({
+        where: { ussdSessionId: input.sessionId },
+      })
+      expect(bookings).toHaveLength(1)
+    })
+
+
+    it('returns after persisting the booking when SMS delivery is still pending', async () => {
+      const slowMessenger = {
+        sendSms: async () => new Promise<{ providerId?: string }>(() => undefined),
+      }
+      const input = {
+        phoneNumber: '+254700000001',
+        text: '1*KQ100*1430*Mombasa*2*1',
+        sessionId: 'sess-async-sms',
+      }
+
+      const response = await handleUssd(input, {
+        ...deps,
+        messenger: slowMessenger,
+        awaitNotifications: false,
+      })
+
+      expect(response.type).toBe('END')
+      expect(response.text).toContain('SMS confirmation will follow')
+      const booking = await prisma.booking.findUnique({
+        where: { ussdSessionId: input.sessionId },
+      })
+      expect(booking).not.toBeNull()
+    })
+
     it('returns existing booking on retry with same sessionId', async () => {
       const res1 = await handleUssd({ phoneNumber: '+254700000001', text: '1*KQ100*1430*Mombasa*2*1', sessionId: 'sess-50' }, deps)
       expect(res1.type).toBe('END')

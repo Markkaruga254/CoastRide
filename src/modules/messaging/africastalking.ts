@@ -1,99 +1,89 @@
 import { MessagingPort } from './port.js'
 import { getEnv } from '../../config/env.js'
-import AfricasTalking from 'africastalking'
 import pino from 'pino'
 
 let logger: pino.Logger | null = null
 function getLogger(): pino.Logger {
-  if (!logger) {
-    logger = pino({ level: getEnv().LOG_LEVEL })
-  }
+  if (!logger) logger = pino({ level: getEnv().LOG_LEVEL })
   return logger
 }
 
-let loggedSdkResponse = false
+type Recipient = {
+  number?: string
+  status?: string
+  statusCode?: number | string
+  messageId?: string
+}
 
-export class AfricasTalkingMessenger implements MessagingPort {
-  private readonly sdk: ReturnType<typeof AfricasTalking>['SMS']
-  private readonly username: string
-
-  constructor() {
-    const env = getEnv()
-    // AT_USERNAME and AT_API_KEY are validated as required when AT_ENABLED=true in env schema
-    const username = env.AT_USERNAME as string
-    const apiKey = env.AT_API_KEY as string
-    this.username = username
-    const at = AfricasTalking({
-      apiKey,
-      username,
-    })
-    this.sdk = at.SMS
+type SendResponse = {
+  SMSMessageData?: {
+    Recipients?: Recipient[]
   }
+}
+
+/**
+ * Small native-fetch adapter for Africa's Talking SMS.
+ * Avoids pulling the provider SDK's HTTP/validation dependency tree into the API.
+ */
+export class AfricasTalkingMessenger implements MessagingPort {
+  constructor(private readonly fetchImpl: typeof fetch = fetch) {}
 
   async sendSms(input: {
     to: string
     message: string
     bookingId?: string
   }): Promise<{ providerId?: string }> {
+    const env = getEnv()
+    if (!env.AT_ENABLED || !env.AT_USERNAME || !env.AT_API_KEY) {
+      throw new Error("Africa's Talking is not enabled or configured")
+    }
+
+    const endpoint = env.AT_USERNAME === 'sandbox'
+      ? 'https://api.sandbox.africastalking.com/version1/messaging'
+      : 'https://api.africastalking.com/version1/messaging'
+    const body = new URLSearchParams({
+      username: env.AT_USERNAME,
+      to: input.to,
+      message: input.message,
+    })
+
     try {
-      const response = await this.sdk.send({
-        to: [input.to],
-        message: input.message,
+      const response = await this.fetchImpl(endpoint, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/x-www-form-urlencoded',
+          apiKey: env.AT_API_KEY,
+        },
+        body,
+        signal: AbortSignal.timeout(10_000),
       })
 
-      if (!loggedSdkResponse) {
-        const masked = this.maskResponse(response)
-        getLogger().debug({ masked }, '[AfricasTalking] send response')
-        loggedSdkResponse = true
+      if (!response.ok) {
+        throw new Error(`Africa's Talking SMS API returned HTTP ${response.status}`)
       }
 
-      const recipients = response?.SMSMessageData?.Recipients
-      if (!recipients || recipients.length === 0) {
-        throw new Error('No recipients in Africa\'s Talking response')
+      const payload = await response.json() as SendResponse
+      const recipient = payload.SMSMessageData?.Recipients?.[0]
+      if (!recipient) {
+        throw new Error("No recipients in Africa's Talking response")
       }
 
-      const recipient = recipients[0]
-      if (recipient.statusCode !== 101 && recipient.statusCode !== 100) {
-        throw new Error(`Africa's Talking send failed: ${recipient.status} (code ${recipient.statusCode})`)
+      const statusCode = Number(recipient.statusCode)
+      if (![100, 101, 102].includes(statusCode)) {
+        throw new Error(
+          `Africa's Talking send failed: ${recipient.status ?? 'unknown status'} (code ${statusCode})`,
+        )
       }
 
       return { providerId: recipient.messageId }
     } catch (err) {
-      const error = err as Error
-      getLogger().error({ message: error.message, bookingId: input.bookingId }, '[AfricasTalking] sendSms error')
+      const error = err instanceof Error ? err : new Error('Unknown Africa\'s Talking error')
+      getLogger().error(
+        { message: error.message, bookingId: input.bookingId },
+        '[AfricasTalking] sendSms error',
+      )
       throw error
     }
-  }
-
-  private maskResponse(response: unknown): unknown {
-    if (!response || typeof response !== 'object') return response
-    const obj = response as Record<string, unknown>
-    const masked = { ...obj }
-    if (masked.SMSMessageData && typeof masked.SMSMessageData === 'object') {
-      const smsData = masked.SMSMessageData as Record<string, unknown>
-      if (smsData.Recipients && Array.isArray(smsData.Recipients)) {
-        masked.SMSMessageData = {
-          ...smsData,
-          Recipients: smsData.Recipients.map((r: unknown) => {
-            if (!r || typeof r !== 'object') return r
-            const rec = r as Record<string, unknown>
-            return {
-              ...rec,
-              number: rec.number ? this.maskPhone(rec.number as string) : rec.number,
-              messageId: rec.messageId,
-              status: rec.status,
-              statusCode: rec.statusCode,
-              cost: rec.cost,
-            }
-          }),
-        }
-      }
-    }
-    return masked
-  }
-
-  private maskPhone(phone: string): string {
-    if (phone.length <= 4) return '****'
-    return phone.slice(0, -4).replace(/\d/g, '*') + phone.slice(-4)
   }
 }

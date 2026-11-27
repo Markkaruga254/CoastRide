@@ -4,9 +4,9 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "tsx watch --env-file=.env src/http/server.ts",
+    "dev": "tsx watch --env-file=.env src/start.ts",
     "build": "tsc && prisma generate",
-    "start": "node dist/http/server.js",
+    "start": "node dist/start.js",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "node --env-file=.env ./node_modules/.bin/vitest run --passWithNoTests",
@@ -16,11 +16,9 @@
   },
   "dependencies": {
     "@prisma/client": "^5.16.0",
-    "africastalking": "^0.7.9",
-    "fastify": "^4.28.0",
-    "pino": "^8.21.0",
-    "prisma": "^5.22.0",
-    "zod": "^3.23.0"
+    "fastify": "^5.12.8",
+    "pino": "^9.6.0",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
@@ -34,5 +32,8 @@
   },
   "prisma": {
     "schema": "prisma/schema.prisma"
+  },
+  "engines": {
+    "node": ">=22.0.0"
   }
 }
