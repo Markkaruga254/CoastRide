@@ -4,11 +4,11 @@ Hackathon: Africa's Talking Hospitality & Tourism Hackathon, Mombasa, 27 Nov 202
 Challenge: **CoastRide**, an airport and SGR transfer company that must coordinate drivers, passengers, pickup locations, arrival times and last-minute changes.
 
 ## One-sentence pitch
-CoastRide turns every airport and SGR arrival into a coordinated pickup: the passenger books by USSD, the driver confirms with one SMS reply, and delays update everyone automatically.
+CoastRide turns every airport and SGR arrival into a coordinated pickup: passengers book by USSD, drivers manage offers and trip progress by a separate USSD code or SMS commands, and delays update everyone automatically.
 
 ## Actors
-- **Passenger**: books via USSD (any phone, no app).
-- **Driver**: receives offers via SMS, replies with keywords.
+- **Passenger**: books and checks bookings via USSD (any phone, no app).
+- **Driver**: receives trip offers by SMS and can accept, decline and update trip progress by SMS or the driver USSD service.
 - **Dispatcher** (read-only for the MVP): watches trips on a live board.
 
 ## Trip states
@@ -42,15 +42,33 @@ Unknown or malformed messages get a short help SMS reply. Replies from numbers t
 ## Driver selection (MVP)
 Active drivers ordered by id, skipping any who already declined or timed out for this booking. Offer to one driver at a time.
 
-## USSD flow (passenger booking)
+## USSD service codes
+
+Passenger code `*384*43639#`:
+
 ```
 CON Welcome to CoastRide
 1. Airport pickup (MIA)
 2. SGR station pickup
 3. Check my booking
 ```
-Booking path: pickup point -> arrival reference (flight/train no.) -> arrival time (HHMM today) -> destination (free text, short) -> party size (1-6) -> confirm -> `END Booked! Ref CR1042. SMS sent.`
-"Check my booking" asks for ref and returns state + driver (if any).
+
+Booking path: pickup point -> arrival reference (flight/train no.) -> arrival time (HHMM) -> destination -> party size (1-6) -> confirm. "Check my booking" asks for ref and returns state + driver (if any).
+
+Driver code `*384*78088#`:
+
+```
+CON CoastRide Driver
+1. View current trip
+2. Help
+```
+
+After selecting the current trip, the action depends on the trip state:
+- `OFFERED`: `1. Accept`, `2. Decline`.
+- `CONFIRMED`: `3. Mark arrived`.
+- `ARRIVED`: `4. Complete trip`.
+
+The driver's caller ID must match an active driver record. Invalid or stale actions end safely and never perform a different transition. Both service codes use the same callback endpoint; the handler dispatches using the incoming `serviceCode`.
 
 Rules: max 160 chars per screen; invalid input re-prompts once, then `END`.
 
@@ -70,11 +88,10 @@ src/
   modules/
     bookings/        service, repo, ref generator
     trips/           stateMachine.ts, transitions, events
-    drivers/         repo, selection
-    messaging/       MessagingPort, FakeMessenger, (Phase 2) AfricasTalkingMessenger, templates
-    ussd/            handleUssd pure function, session text parser
+    drivers/          repo, selection
+    messaging/       MessagingPort, FakeMessenger, AfricasTalkingMessenger, templates
+    ussd/            passenger and driver handlers
     sms-inbound/     keyword parser
-  jobs/              pg-boss workers (Phase 3)
   lib/               phone normalization, logger, masking
 prisma/              schema + migrations
 tests/
@@ -87,19 +104,16 @@ interface MessagingPort {
 }
 ```
 
-## Africa's Talking reference (verify against current docs before relying on it)
-- **Sandbox:** username `sandbox`, API key from the AT dashboard. SMS and USSD can be tested in the dashboard simulator.
-- **USSD callback:** HTTP POST, `application/x-www-form-urlencoded`, fields: `sessionId`, `serviceCode`, `phoneNumber`, `networkCode`, `text`. `text` is the `*`-joined list of all inputs so far (empty on first request). Response must be `text/plain`, starting with `CON ` (continue) or `END ` (finish).
-- **Inbound SMS callback:** HTTP POST, form-encoded, fields include `from`, `to`, `text`, `date`, `id`, `linkId`.
-- **Send SMS (Node SDK):** `AfricasTalking({ apiKey, username }).SMS.send({ to: ['+2547...'], message, from? })`.
-- Callbacks are **not signed**. Protect with a secret path segment (e.g. `/webhooks/<SECRET>/ussd`) and rate limiting.
+## Africa's Talking callback contract
+- **Sandbox:** username `sandbox`; use the sandbox API key from the dashboard. Never commit it.
+- **USSD callback:** HTTP POST, `application/x-www-form-urlencoded`, fields include `sessionId`, `serviceCode`, `phoneNumber`, `networkCode`, and `text`. The `text` value is the `*`-joined history of inputs. Response is `text/plain` starting with `CON ` or `END `.
+- **Inbound SMS callback:** HTTP POST, form-encoded, fields include `from`, `to`, `text`, `date`, `id`, and `linkId`.
+- Callbacks are protected by a secret path segment and rate limiting.
 
 ## Security requirements
 - Webhook secret in path, constant-time compare
 - Zod validation on every inbound payload
 - Rate limit webhooks and public REST endpoints
 - Masked phone numbers in logs; no message bodies at info level
-- Idempotent webhook handling
-
-## Out of scope for the MVP
-Voice, payments, maps, auth, multi-tenancy, drivers app, real flight/train status lookups.
+- Driver actions authorized by the registered caller number and current trip assignment
+- Replayed/stale USSD selections cannot advance a trip to a different state

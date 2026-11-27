@@ -15,6 +15,8 @@ export const envSchema = z.object({
   AT_ENABLED: z.string().transform((v) => v === 'true').default(false),
   AT_USERNAME: z.string().optional(),
   AT_API_KEY: z.string().optional(),
+  AT_PASSENGER_USSD_CODE: z.string().trim().min(1).default('*384*43639#'),
+  AT_DRIVER_USSD_CODE: z.string().trim().min(1).default('*384*78088#'),
   CRON_SECRET: z.preprocess(
     (value) => value === '' ? undefined : value,
     z.string().min(24).optional(),

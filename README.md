@@ -20,6 +20,8 @@ Airport and SGR transfer coordination backend.
 | `AT_ENABLED` | No | `false` | Enable Africa's Talking adapter |
 | `AT_USERNAME` | When `AT_ENABLED=true` | — | Africa's Talking username |
 | `AT_API_KEY` | When `AT_ENABLED=true` | — | Africa's Talking API key |
+| `AT_PASSENGER_USSD_CODE` | No | `*384*43639#` | Passenger booking service code |
+| `AT_DRIVER_USSD_CODE` | No | `*384*78088#` | Driver trip-management service code |
 | `CRON_SECRET` | No | — | Secret for `/internal/jobs/process` (min 24 chars) |
 | `OFFER_TIMEOUT_SECONDS` | No | `180` | Driver offer expiry in seconds (min 10) |
 | `LOG_LEVEL` | No | `info` | Pino log level |
@@ -66,64 +68,27 @@ npm run dev
 curl http://localhost:3000/health
 ```
 
-## Run Phase 1 — happy path (curl)
-
-```bash
-BASE=http://localhost:3000
-
-# Create a booking (returns REF like CR1042)
-REF=$(curl -s -X POST $BASE/bookings \
-  -H 'Content-Type: application/json' \
-  -d '{"passengerPhone":"+254700000010","passengerName":"John Doe","pickupPoint":"MIA","arrivalRef":"BA123","pickupAt":"2026-11-24T14:30:00Z","destination":"Westlands","partySize":2}' \
-  | jq -r '.ref')
-echo "Booking ref: $REF"
-
-# View the booking (state: REQUESTED)
-curl -s $BASE/bookings/$REF | jq .
-
-# Offer driver 1 (via service — no HTTP offer endpoint yet)
-npm run db:seed
-node --env-file=.env -e "
-import { PrismaClient } from '@prisma/client';
-import { offerNextDriver } from './src/modules/bookings/service.js';
-const p = new PrismaClient();
-(async () => {
-  const b = await p.booking.findUnique({ where: { ref: '$REF' } });
-  const o = await offerNextDriver({ prisma: p, messenger: { sendSms: async () => ({}) } }, { bookingId: b.id });
-  console.log('Offered to driver:', o.driver?.name, o.driver?.phone);
-  await p.$disconnect();
-})();
-"
-
-# Driver accepts
-curl -s -X POST $BASE/bookings/$REF/driver-response \
-  -H 'Content-Type: application/json' \
-  -d '{"driverPhone":"+254700000001","action":"accept"}' \
-  | jq .
-
-# View booking (state: CONFIRMED)
-curl -s $BASE/bookings/$REF | jq .
-
-# Delay 90 minutes
-curl -s -X POST $BASE/bookings/$REF/delay \
-  -H 'Content-Type: application/json' \
-  -d '{"minutes":90}' | jq .
-
-# Cancel
-curl -s -X POST $BASE/bookings/$REF/cancel \
-  -H 'Content-Type: application/json' \
-  -d '{}' | jq .
-```
-
 ## Connect to the Africa's Talking sandbox
 
-Set `AT_ENABLED=true`, `AT_USERNAME=sandbox`, and the sandbox API key in your untracked `.env` file. Configure the public HTTPS callback URLs in the Africa's Talking dashboard:
+Set `AT_ENABLED=true`, `AT_USERNAME=sandbox`, and the sandbox API key in your untracked `.env` file. Configure both USSD service codes to use the same public HTTPS callback:
 
-- USSD: `https://<host>/webhooks/<WEBHOOK_SECRET>/ussd`
+- Passenger `*384*43639#`: `https://<host>/webhooks/<WEBHOOK_SECRET>/ussd`
+- Driver `*384*78088#`: `https://<host>/webhooks/<WEBHOOK_SECRET>/ussd`
 - Inbound SMS: `https://<host>/webhooks/<WEBHOOK_SECRET>/sms`
 
-For local development, expose the API with a trusted HTTPS tunnel and use its public URL in the dashboard. Never paste the API key or webhook secret into source control or issue comments.
+The USSD callback routes by the `serviceCode` field, so the passenger and driver codes reach separate handlers even though they share the callback URL. If either code changes in the Africa's Talking dashboard, update its matching environment variable.
 
+### Driver USSD journey
+
+The caller's number must match an active driver record in the `Driver` table. The driver menu shows the driver's current offer/trip and exposes only the action valid for its state:
+
+- `OFFERED`: choose `1` to accept or `2` to decline.
+- `CONFIRMED`: choose `3` to mark arrival.
+- `ARRIVED`: choose `4` to complete the trip.
+
+A repeated or stale action is rejected rather than being interpreted as a different state transition. Kenyan mobile numbers in both the `07x` and `01x` ranges are accepted. The sandbox simulator must use a number registered to an active CoastRide driver; a syntactically valid but unregistered number is not automatically enrolled.
+
+For local development, expose the API with a trusted HTTPS tunnel and use its public URL in the dashboard. Never paste the API key or webhook secret into source control or issue comments.
 
 ## Scheduled backend recovery
 
@@ -146,7 +111,6 @@ curl --fail-with-body -X POST https://<api-host>/internal/jobs/process \
 ```
 
 Set `CRON_SECRET` in the scheduler's secret environment too. The endpoint returns counts for expired offers, retried bookings and dispatched messages. Do not use the Africa's Talking webhook secret as the cron secret. If no cron secret is configured, the endpoint returns 404.
-
 
 ### SMS status semantics
 

@@ -6,15 +6,16 @@ export function normalizePhone(raw: string): string {
     normalized = s
   } else if (s.startsWith('254')) {
     normalized = '+' + s
-  } else if (s.startsWith('07')) {
+  } else if (s.startsWith('07') || s.startsWith('01')) {
     normalized = '+254' + s.slice(1)
-  } else if (s.startsWith('7')) {
+  } else if (s.startsWith('7') || s.startsWith('1')) {
     normalized = '+254' + s
   } else {
     throw new Error(`Unrecognized phone format: ${raw}`)
   }
 
-  if (!/^\+2547\d{8}$/.test(normalized)) {
+  // Kenyan mobile allocations include both 07x and 01x ranges.
+  if (!/^\+254[17]\d{8}$/.test(normalized)) {
     throw new Error(`Invalid Kenyan phone number: ${raw}`)
   }
 

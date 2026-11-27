@@ -5,7 +5,7 @@ import { getEnv } from '../../config/env.js'
 import { MessagingPort } from '../../modules/messaging/port.js'
 import { verifySecret } from '../../lib/security.js'
 import { handleUssd } from '../../modules/ussd/handleUssd.js'
-import { normalizePhone } from '../../lib/phone.js'
+import { handleDriverUssd } from '../../modules/ussd/handleDriverUssd.js'
 import { allowRateLimit } from '../../lib/rateLimit.js'
 import { offerNextDriver } from '../../modules/bookings/service.js'
 
@@ -16,6 +16,10 @@ const ussdBodySchema = z.object({
   networkCode: z.string().optional(),
   text: z.string().max(1_000).default(''),
 })
+
+function normalizeServiceCode(value: string): string {
+  return value.replace(/\D/g, '')
+}
 
 const ussdRoute: FastifyPluginAsync<{ prisma: PrismaClient; messenger: MessagingPort }> = async (
   app,
@@ -45,17 +49,34 @@ const ussdRoute: FastifyPluginAsync<{ prisma: PrismaClient; messenger: Messaging
     }
 
     const { sessionId, phoneNumber, text } = result.data
-    const phone = normalizePhone(phoneNumber)
+    const env = getEnv()
+    const incomingCode = normalizeServiceCode(result.data.serviceCode ?? '')
+    const passengerCode = normalizeServiceCode(env.AT_PASSENGER_USSD_CODE)
+    const driverCode = normalizeServiceCode(env.AT_DRIVER_USSD_CODE)
 
     try {
-      const response = await handleUssd(
-        { phoneNumber: phone, text, sessionId },
-        { prisma: deps.prisma, messenger: deps.messenger, now: () => new Date(), awaitNotifications: false },
-      )
+      let response: { type: 'CON' | 'END'; text: string }
+      const isDriverService = incomingCode !== '' && incomingCode === driverCode
 
-      // Fire and forget: offer the newly created booking to the first available driver.
-      // The USSD response must not wait on this or on SMS dispatch.
-      if (response.type === 'END' && response.text.includes('Booked!')) {
+      if (incomingCode !== '' && incomingCode !== passengerCode && !isDriverService) {
+        response = {
+          type: 'END',
+          text: 'END This CoastRide service code is not configured.',
+        }
+      } else if (isDriverService) {
+        response = await handleDriverUssd(
+          { phoneNumber, text },
+          { prisma: deps.prisma, messenger: deps.messenger },
+        )
+      } else {
+        response = await handleUssd(
+          { phoneNumber, text, sessionId },
+          { prisma: deps.prisma, messenger: deps.messenger, now: () => new Date(), awaitNotifications: false },
+        )
+      }
+
+      // Only passenger booking confirmations trigger initial driver allocation.
+      if (!isDriverService && response.type === 'END' && response.text.includes('Booked!')) {
         const log = request.log
         void deps.prisma.booking
           .findUnique({ where: { ussdSessionId: sessionId } })
@@ -75,7 +96,10 @@ const ussdRoute: FastifyPluginAsync<{ prisma: PrismaClient; messenger: Messaging
       reply.type('text/plain')
       return response.text
     } catch (err) {
-      request.log.error({ err, sessionId, phone: phone.replace(/\d(?=\d{4})/g, '*') }, 'USSD handler error')
+      request.log.error(
+        { err, sessionId, phone: phoneNumber.replace(/\d(?=\d{4})/g, '*') },
+        'USSD handler error',
+      )
       reply.type('text/plain')
       return 'END Service temporarily unavailable. Please try again.'
     }
