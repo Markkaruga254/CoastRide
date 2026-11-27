@@ -56,9 +56,13 @@ export function completed(ref: string): string {
 }
 
 export function helpText(): string {
-  return `CoastRide: reply 1 accept / 2 decline / ARRIVED / DONE / CANCEL / DELAY <min>.`
+  return `CoastRide: 1 <ref> accept, 2 <ref> decline, DELAY <min> <ref>, ARRIVED <ref>, DONE <ref>`
 }
 
 export function noDriverAvailable(ref: string): string {
   return `CoastRide ${ref}: no driver is available right now. Please try again shortly or contact support.`
+}
+
+export function actionNotAvailable(ref: string): string {
+  return `CoastRide ${ref}: that action isn't available right now.`
 }
